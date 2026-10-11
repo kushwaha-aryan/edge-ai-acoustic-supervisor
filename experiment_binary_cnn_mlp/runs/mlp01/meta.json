@@ -19,7 +19,7 @@
     "Train",
     "Vehicle_Horn"
   ],
-  "cnn_source": "C:\\Users\\BITPATNA\\minorProject\\experiment_binary_cnn_lr\\runs\\exp01",
+  "cnn_source": "experiment_binary_cnn_lr/runs/exp01",
   "hidden": 64,
   "epochs": 50,
   "input_features": 17,
@@ -27,7 +27,7 @@
   "val_windows": 74830,
   "balanced_class_weights": false,
   "z_cache": {
-    "dir": "C:\\Users\\BITPATNA\\minorProject\\experiment_binary_cnn_mlp\\cache",
+    "dir": "experiment_binary_cnn_mlp/cache",
     "fingerprint": {
       "source_run": "exp01",
       "class_names": [

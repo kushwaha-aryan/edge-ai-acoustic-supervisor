@@ -35,6 +35,8 @@ experiment_binary_cnn_mlp/runs/<run-name>/:
   mlp_head.keras                  the trained MLP head
   class_names.txt                 the 17 class names in id order
   meta.json                       run metadata and validation metrics
+                                  (source/cache paths stored repo-relative,
+                                  POSIX form, so the run is portable)
 If that directory already exists the script aborts before doing any work, so
 existing experiment runs are never overwritten. Nothing in data/ is rewritten
 and no existing file is modified; this experiment is fully contained in
@@ -86,6 +88,15 @@ CACHE_ROOT = Path(__file__).resolve().parent / "cache"
 DEFAULT_SOURCE_RUN = ROOT / "experiment_binary_cnn_lr" / "runs" / "exp01"
 SPEC = config.PRESETS[config.PRESET_A]
 NUM_CLASSES = config.NUM_TRIGGER_CLASSES
+
+
+def _portable(path: Path) -> str:
+    """Return a repo-relative POSIX path, or the absolute path if outside ROOT."""
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(resolved)
 
 
 def _validate_run_name(raw: str) -> str:
@@ -565,14 +576,14 @@ def main() -> int:
     meta = {
         "run_name": run_name,
         "class_names": names,
-        "cnn_source": str(source_run),
+        "cnn_source": _portable(source_run),
         "hidden": args.hidden,
         "epochs": args.epochs,
         "input_features": NUM_CLASSES,
         "train_windows": int(train_x.shape[0]),
         "val_windows": int(val_x.shape[0]),
         "balanced_class_weights": bool(args.balanced_class_weights),
-        "z_cache": {"dir": str(cache_dir), "fingerprint": fingerprint},
+        "z_cache": {"dir": _portable(cache_dir), "fingerprint": fingerprint},
         "mlp": {
             "hidden": args.hidden,
             "dropout": config.DROPOUT_RATE,

@@ -16,7 +16,10 @@ Every run needs a unique --run-name. After training the full Keras model
 (architecture + learned parameters) is saved to data/models/<run-name>.keras
 (the directory is created if it does not exist); if that file already exists
 the script aborts before doing any work, so existing models are never
-overwritten. Reload later for Phase 4 inference with
+overwritten. The per-epoch training history is written alongside it to
+data/models/<run-name>.history.json (run name, epochs, parameter count,
+metric series, per-epoch seconds, elapsed seconds); that file is never
+overwritten either. Reload later for Phase 4 inference with
 tf.keras.models.load_model("data/models/<run-name>.keras").
 
 Safety guards: model.fit() runs only when --confirm-train is passed; without it
@@ -460,6 +463,22 @@ def main() -> int:
         "reload with tf.keras.models.load_model(...)",
         flush=True,
     )
+    history_path = MODEL_DIR / f"{run_name}.history.json"
+    if history_path.exists():
+        raise SystemExit(f"refusing to overwrite existing history: {history_path}")
+    history_payload = {
+        "run_name": run_name,
+        "epochs": args.epochs,
+        "parameters": parameters,
+        "history": {
+            key: [float(value) for value in values]
+            for key, values in metrics.items()
+        },
+        "epoch_seconds": [float(value) for value in timer.epoch_seconds],
+        "elapsed_seconds": round(time.perf_counter() - started, 1),
+    }
+    history_path.write_text(json.dumps(history_payload, indent=2), encoding="utf-8")
+    print(f"saved training history: {history_path}", flush=True)
     print(f"total wall time: {time.perf_counter() - started:.1f} s", flush=True)
     print("Phase 3A training run complete.", flush=True)
     return 0
