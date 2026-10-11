@@ -1,0 +1,115 @@
+{
+  "run_name": "mlp01",
+  "class_names": [
+    "Aircraft",
+    "Alarm",
+    "Baby_Crying",
+    "Car_Engine",
+    "Dog_Bark",
+    "Doorbell",
+    "Drilling",
+    "Footsteps",
+    "Glass_Breaking",
+    "Gunshot",
+    "Help_Shouting",
+    "Jackhammer",
+    "Knocking",
+    "Motorcycle",
+    "Siren",
+    "Train",
+    "Vehicle_Horn"
+  ],
+  "cnn_source": "C:\\Users\\BITPATNA\\minorProject\\experiment_binary_cnn_lr\\runs\\exp01",
+  "hidden": 64,
+  "epochs": 50,
+  "input_features": 17,
+  "train_windows": 324613,
+  "val_windows": 74830,
+  "balanced_class_weights": false,
+  "z_cache": {
+    "dir": "C:\\Users\\BITPATNA\\minorProject\\experiment_binary_cnn_mlp\\cache",
+    "fingerprint": {
+      "source_run": "exp01",
+      "class_names": [
+        "Aircraft",
+        "Alarm",
+        "Baby_Crying",
+        "Car_Engine",
+        "Dog_Bark",
+        "Doorbell",
+        "Drilling",
+        "Footsteps",
+        "Glass_Breaking",
+        "Gunshot",
+        "Help_Shouting",
+        "Jackhammer",
+        "Knocking",
+        "Motorcycle",
+        "Siren",
+        "Train",
+        "Vehicle_Horn"
+      ],
+      "num_classes": 17,
+      "spec_shape": [
+        64,
+        5,
+        1
+      ],
+      "preset": "A",
+      "train_rows": 324613,
+      "val_rows": 74830
+    }
+  },
+  "mlp": {
+    "hidden": 64,
+    "dropout": 0.3,
+    "optimizer": "adam",
+    "learning_rate": 0.001,
+    "loss": "sparse_categorical_crossentropy",
+    "window_val_accuracy": 0.47482293197915276,
+    "clip_val_accuracy": 0.5828182941903585,
+    "history": {
+      "accuracy": [
+        0.698037326335907,
+        0.7193581461906433,
+        0.7227344512939453,
+        0.7244626879692078,
+        0.7249771356582642,
+        0.7273707389831543
+      ],
+      "loss": [
+        0.9767063856124878,
+        0.8862359523773193,
+        0.8760893940925598,
+        0.869006335735321,
+        0.8665072917938232,
+        0.8615199327468872
+      ],
+      "val_accuracy": [
+        0.4748229384422302,
+        0.4716423749923706,
+        0.4722437560558319,
+        0.4726446568965912,
+        0.47305893898010254,
+        0.471869558095932
+      ],
+      "val_loss": [
+        2.1635653972625732,
+        2.2349722385406494,
+        2.265612840652466,
+        2.2587366104125977,
+        2.263270854949951,
+        2.2655086517333984
+      ],
+      "learning_rate": [
+        0.0010000000474974513,
+        0.0010000000474974513,
+        0.0010000000474974513,
+        0.0005000000237487257,
+        0.0005000000237487257,
+        0.0002500000118743628
+      ]
+    }
+  },
+  "elapsed_seconds": 162.9
+}

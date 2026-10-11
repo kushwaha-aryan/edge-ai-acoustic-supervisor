@@ -1,0 +1,1 @@
+# runs/ (trained per-class CNNs, lr_classifier.joblib, meta.json) is committed for reproducibility.

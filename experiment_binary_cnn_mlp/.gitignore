@@ -1,0 +1,4 @@
+# runs/ (trained per-class CNNs copied from exp01, mlp_head.keras, meta.json) is committed for reproducibility.
+
+# Derived per-window z matrix cache (CNN sigmoid outputs) - never commit (regenerable)
+cache/

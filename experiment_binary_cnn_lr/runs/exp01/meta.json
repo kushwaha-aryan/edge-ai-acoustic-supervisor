@@ -1,0 +1,52 @@
+{
+  "run_name": "exp01",
+  "class_names": [
+    "Aircraft",
+    "Alarm",
+    "Baby_Crying",
+    "Car_Engine",
+    "Dog_Bark",
+    "Doorbell",
+    "Drilling",
+    "Footsteps",
+    "Glass_Breaking",
+    "Gunshot",
+    "Help_Shouting",
+    "Jackhammer",
+    "Knocking",
+    "Motorcycle",
+    "Siren",
+    "Train",
+    "Vehicle_Horn"
+  ],
+  "epochs": 8,
+  "parameters_per_cnn": 56129,
+  "train_windows": 324613,
+  "val_windows": 74830,
+  "per_class_val_accuracy": {
+    "Aircraft": 0.8168515563011169,
+    "Alarm": 0.8664973974227905,
+    "Baby_Crying": 0.9844046235084534,
+    "Car_Engine": 0.897581160068512,
+    "Dog_Bark": 0.7677401900291443,
+    "Doorbell": 0.8374582529067993,
+    "Drilling": 0.8852198123931885,
+    "Footsteps": 0.8023787140846252,
+    "Glass_Breaking": 0.8236669898033142,
+    "Gunshot": 0.8204864263534546,
+    "Help_Shouting": 0.8270078897476196,
+    "Jackhammer": 0.9513297080993652,
+    "Knocking": 0.8370974063873291,
+    "Motorcycle": 0.8212080597877502,
+    "Siren": 0.9433115124702454,
+    "Train": 0.7587465047836304,
+    "Vehicle_Horn": 0.9216490983963013
+  },
+  "logistic": {
+    "solver": "lbfgs",
+    "max_iter": 1000,
+    "window_val_accuracy": 0.47316584257650673,
+    "clip_val_accuracy": 0.5902348578491965
+  },
+  "elapsed_seconds": 4571.6
+}

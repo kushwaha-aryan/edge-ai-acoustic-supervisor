@@ -33,6 +33,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import joblib
 import librosa
@@ -95,7 +97,7 @@ def _load_yamnet(hub_dir: Path) -> object:
                                    f"{SCORE_KEY}")
             print(f"YAMNet loaded from: {label}")
             return signature
-        except Exception as exc:  # noqa: BLE001 - try the next source
+        except Exception as exc:
             print(f"YAMNet load from {label} failed: "
                   f"{type(exc).__name__}: {exc}")
     raise SystemExit("YAMNet could not be loaded (offline copy missing and "
@@ -120,7 +122,7 @@ def _load_wav(path: Path) -> np.ndarray:
 def _record_mic(seconds: int) -> np.ndarray:
     """Capture seconds of mono audio through the default input device."""
     try:
-        import sounddevice as sd  # noqa: F401  - imported lazily on purpose
+        import sounddevice as sd
     except ImportError as exc:
         raise SystemExit(
             "mic capture needs the sounddevice package, which is not "

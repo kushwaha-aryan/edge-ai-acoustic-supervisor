@@ -165,11 +165,12 @@ Local inference is intended to **reduce dependence on cloud processing** and to 
 
 ## 8. Project Status
 
-**Current state (2026-10-10):** dataset acquisition, validation, preprocessing, and the Phase 3A model training +
+**Current state (2026-10-12):** dataset acquisition, validation, preprocessing, and the Phase 3A model training +
 validation analysis are EXECUTED, including the controlled experiments (preset A, preset D and preset E with
-`--pool-freq-only`, clip-level evaluation) and the YAMNet frozen-embedding baseline (fit + report, experimental
-only). All Phase 3B **test-split** evaluation, longer-hyperparameter training, and Phases 4-6 remain **gated on
-explicit user authorization**.
+`--pool-freq-only`, clip-level evaluation), the YAMNet frozen-embedding baseline (fit + report, experimental only),
+and two isolated architecture-comparison experiments (per-class binary CNNs with a logistic head and with an MLP
+head; experimental only). All Phase 3B **test-split** evaluation, longer-hyperparameter training, and Phases 4-6
+remain **gated on explicit user authorization**.
 
 In phase order, what is actually in place:
 
@@ -194,6 +195,16 @@ In phase order, what is actually in place:
    validation-side-by-side logistic-head 0.7769 / 0.7426 / 0.7791 vs zero-shot 0.6273 / 0.5955 / 0.6135 vs the CNN
    (`baseline_A` clips) 0.4994 / 0.4689 / 0.5193 — experimental baseline only, **NOT adopted as the perception
    layer** (per §2.6).
+   - Two **isolated architecture-comparison experiments** (experimental only, **NOT adopted**; self-contained at the
+     repo root, nothing in `data/` or the locked pipeline modified, test split never opened): a per-class
+     **binary-CNN** first stage — 17 binary CNNs (one sigmoid per trigger class; 56,129 params each) trained on the
+     same locked preset-A windows — with the second-stage **head** varied:
+     - `experiment_binary_cnn_lr/` — CNN → sklearn logistic head: window val 0.4732, **clip val 0.5902** (720-clip
+       demo 417/720 = 57.9%).
+     - `experiment_binary_cnn_mlp/` — CNN → tf.keras MLP head (17→64→17): window val 0.4748, **clip val 0.5828**
+       (720-clip demo 419/720 = 58.2%).
+     Both are far below the YAMNet pipeline (0.7769) and roughly equal to each other, so swapping the head does
+     **not** close the gap — the frozen-CNN feature stage is the limit. See blueprint §2.7.
 
 Splits must pass the mandatory validation gate (proportion + per-class distribution + leakage + spectrogram +
 artifact checks) before any training - Phase 2A/2B gates currently PASS. Phases 4-6 not started.
@@ -242,6 +253,8 @@ notebooks/          Jupyter notebooks for exploration & visualization
 scripts/            CLI entry points to run phases end-to-end
 tests/              Unit tests
 results/            Saved models, metrics, plots (gitignored)
+experiment_binary_cnn_lr/   Isolated CNN -> logistic comparison experiment (experimental only; runs/ gitignored)
+experiment_binary_cnn_mlp/  Isolated CNN -> MLP comparison experiment (experimental only; runs/ gitignored)
 docs/               Documentation (see Source Documents below)
   original_proposal/  Archived original PDFs + STATUS.md (superseded, historical)
 ```
