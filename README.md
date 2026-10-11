@@ -74,9 +74,11 @@ IF detected but NOT an enabled trigger → no response; preferred mode unchanged
 The AI sits on top of existing ANC hardware and outputs a **decision signal**. On real ANC hardware this decision would
 be sent as a command to that hardware's own ANC system; in this project the mode change is simulated at software level.
 
-**ML architecture (fixed):** one lightweight CNN, **<100K parameters** target, 16 kHz input, 200 ms windows with 50%
-overlap, 64 mel bands, FFT 1024, hop 512, CPU/local inference. Large pretrained audio transformers (e.g., AST at
-86M+ params) are **not** the project model; Hugging Face models may appear only as optional external baselines.
+**ML architecture (on-device, fixed):** one lightweight CNN, **<100K parameters** target, 16 kHz input, 200 ms windows
+with 50% overlap, 64 mel bands, FFT 1024, hop 512, CPU/local inference. Large pretrained audio transformers (e.g.,
+AST at 86M+ params) are **not** the on-device model. **Final model (decision D13, 2026-10-12):** the project's
+official final / best-performing model is **YAMNet + logistic** (validation clip accuracy **0.7769**), which exceeds
+the edge budget and is reported as the final result; the lightweight CNN remains the on-device architecture.
 
 ## 4. Context Response Engine
 
@@ -167,8 +169,9 @@ Local inference is intended to **reduce dependence on cloud processing** and to 
 
 **Current state (2026-10-12):** dataset acquisition, validation, preprocessing, and the Phase 3A model training +
 validation analysis are EXECUTED, including the controlled experiments (preset A, preset D and preset E with
-`--pool-freq-only`, clip-level evaluation), the YAMNet frozen-embedding baseline (fit + report, experimental only),
-and two isolated architecture-comparison experiments (per-class binary CNNs with a logistic head and with an MLP
+`--pool-freq-only`, clip-level evaluation), the YAMNet frozen-embedding baseline (fit + report; now the official
+final / best model, decision D13), and two isolated architecture-comparison experiments (per-class binary CNNs with
+a logistic head and with an MLP
 head; experimental only). All Phase 3B **test-split** evaluation, longer-hyperparameter training, and Phases 4-6
 remain **gated on explicit user authorization**.
 
@@ -193,8 +196,9 @@ In phase order, what is actually in place:
    29,363 windows); preset D and E trained with `--pool-freq-only` (25,937 params, time axis preserved).
    YAMNet frozen-embedding baseline scaffolded, extracted (8,639 clips, 87,985 frames, 0 failures), and **fit**:
    validation-side-by-side logistic-head 0.7769 / 0.7426 / 0.7791 vs zero-shot 0.6273 / 0.5955 / 0.6135 vs the CNN
-   (`baseline_A` clips) 0.4994 / 0.4689 / 0.5193 — experimental baseline only, **NOT adopted as the perception
-   layer** (per §2.6).
+   (`baseline_A` clips) 0.4994 / 0.4689 / 0.5193 — **adopted (decision D13, 2026-10-12) as the project's official
+   final / best-performing model** (validation clip accuracy 0.7769). The locked CNN remains the on-device model
+   (YAMNet exceeds the <100K edge budget); see §2.6.
    - Two **isolated architecture-comparison experiments** (experimental only, **NOT adopted**; self-contained at the
      repo root, nothing in `data/` or the locked pipeline modified, test split never opened): a per-class
      **binary-CNN** first stage — 17 binary CNNs (one sigmoid per trigger class; 56,129 params each) trained on the
@@ -238,7 +242,7 @@ data/               Raw + processed datasets (gitignored)
   raw/              Downloaded dataset archives (validated copies)
   processed/        Cached .npy mel-spectrogram arrays (Phase 2, preset A)
   processed_preset_D/  Preset D train+val mel arrays (Phase 3A controlled experiment)
-  embeddings/       YAMNet frozen-embedding cache (Phase 3A baseline)
+  embeddings/       YAMNet frozen-embedding cache (final-model feature source; decision D13)
   splits/           Stratified train/val/test split metadata (Phase 1)
   provenance/       Per-clip source/label/metadata records (Phase 1)
 src/                All source code
