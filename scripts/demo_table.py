@@ -4,9 +4,10 @@
 Draws NUM_CASES clips at random (without replacement) from the whole
 validation split only: data/splits/clip_splits.csv filtered to split == val,
 joined on clip_id with data/provenance/phase2a_clip_ledger.csv filtered to
-status == kept. Every clip is the full pipeline of scripts/demo_yamnet.py (its
-audio loader, YAMNet loader and predictor are reused by import; the saved
-model and YAMNet signature are loaded once per run). A clip that fails to load
+status == kept. Every clip runs the application's final prediction path
+src/inference/yamnet_logistic.py (its audio loader, YAMNet loader and predictor
+are reused by import; the saved model and YAMNet signature are loaded once per
+run). A clip that fails to load
 or classify is printed as a row with ERROR and its reason, counted separately
 and never skipped silently. Output is an ASCII table plus a summary block and
 is printed to stdout only; nothing is written, so this script never overwrites
@@ -31,7 +32,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import joblib
 import random
 import secrets
 import sys
@@ -40,10 +40,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-if str(Path(__file__).resolve().parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import demo_yamnet
+from src import config
+from src.inference import yamnet_logistic
 
 SPLIT_CSV = ROOT / "data" / "splits" / "clip_splits.csv"
 LEDGER_CSV = ROOT / "data" / "provenance" / "phase2a_clip_ledger.csv"
@@ -278,18 +277,10 @@ def main() -> int:
     rng = random.Random(seed)
     sample = rng.sample(pool, num_cases)
 
-    model_dir = demo_yamnet._resolve_model_dir(None,
-                                               demo_yamnet.DEFAULT_MODEL_ROOT)
-    scaler = joblib.load(model_dir / "scaler.joblib")
-    clf = joblib.load(model_dir / "classifier.joblib")
-    names = [
-        line.strip()
-        for line in (model_dir / "class_names.txt").read_text(
-            encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    print(f"saved pipeline: {model_dir}")
-    signature = demo_yamnet._load_yamnet(demo_yamnet.DEFAULT_HUB_DIR)
+    pipeline = yamnet_logistic.load_saved_pipeline()
+    names = list(pipeline.class_names)
+    print(f"saved pipeline: {pipeline.model_dir}")
+    signature = yamnet_logistic.load_yamnet_signature()
 
     rows: list[list[str]] = []
     correct = 0
@@ -312,13 +303,13 @@ def main() -> int:
         if class_counts is not None:
             class_counts["shown"] += 1
         try:
-            audio = demo_yamnet._load_wav(
+            audio = yamnet_logistic.load_audio(
                 _clip_path(ledger_row.get("local_path", clip_id)))
-            order, proba = demo_yamnet._embed_and_predict(
-                signature, audio, scaler, clf)
+            order, proba = yamnet_logistic.embed_and_predict(
+                signature, audio, pipeline.scaler, pipeline.classifier)
             predicted = names[order[0]]
             confidence = f"{proba[order[0]]:.2%}"
-            duration = f"{audio.shape[0] / demo_yamnet.config.SAMPLE_RATE:.2f}"
+            duration = f"{audio.shape[0] / config.SAMPLE_RATE:.2f}"
         except Exception as exc:
             predicted = "ERROR"
             confidence = "-"

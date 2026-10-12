@@ -251,7 +251,7 @@ src/                All source code
   preprocessing/    Phase 2 - audio -> mel-spectrogram conversion
   models/           Phase 3 - CNN architecture definition
   training/         Phase 3 - training loop, evaluation, metrics
-  inference/        Phase 4 - live mic capture + real-time classification
+  inference/        Final prediction entry point: YAMNet embeddings + logistic head (Phase 4 live capture next)
   routing/          Phase 5 - trigger policy, temporal verification, Context Response Engine
 notebooks/          Jupyter notebooks for exploration & visualization
 scripts/            CLI entry points to run phases end-to-end

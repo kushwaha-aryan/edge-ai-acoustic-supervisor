@@ -206,6 +206,27 @@ INFERENCE_CADENCE_MS = 200                        # match WINDOW_SIZE_MS
 # from the real dataset after Phase 1 (blueprint §7 Phase 3).
 
 # ---------------------------------------------------------------------------
+# Final inference pipeline (decision D13, 2026-10-12)
+# ---------------------------------------------------------------------------
+# The project's official final / best-performing prediction path is the frozen
+# YAMNet embedding extractor followed by the saved StandardScaler + multinomial
+# logistic head (validated clip accuracy 0.7769 on the 1,618-clip validation
+# split; blueprint section 2.6 Exception / section 2.7). The locked CNN
+# (section 2.6) stays the on-device model but is NOT the final inference path;
+# the inference entry point src/inference/yamnet_logistic.py never falls back
+# to it. All paths derive from PROJECT_ROOT, so they never depend on the
+# working directory. The trained artifacts are loaded, never retrained:
+#   YAMNET_HUB_DIR/            frozen YAMNet SavedModel (offline copy; URL fallback)
+#   YAMNET_LOGISTIC_DIR/       scaler.joblib + classifier.joblib + class_names.txt
+YAMNET_URL = "https://tfhub.dev/google/yamnet/1"
+YAMNET_HUB_DIR = DATA_DIR / "models" / "yamnet_hub"
+YAMNET_LOGISTIC_ROOT = DATA_DIR / "models" / "yamnet_logistic"
+YAMNET_LOGISTIC_RUN = "yamnet_demo"
+YAMNET_LOGISTIC_DIR = YAMNET_LOGISTIC_ROOT / YAMNET_LOGISTIC_RUN
+YAMNET_EMBED_DIM = 1024
+YAMNET_TOP_K = 3
+
+# ---------------------------------------------------------------------------
 # Live capture (Phase 4) / trigger policy + routing (Phase 5)
 # ---------------------------------------------------------------------------
 MAX_DEVICE_CHANNELS = 1
