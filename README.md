@@ -1,4 +1,4 @@
-# Edge AI Earbud Supervisor — Smart Context-Aware Acoustic Supervisor
+# Edge AI Acoustic Supervisor
 
 A lightweight, **locally-running** Edge AI system that samples ambient audio from a standard microphone, converts
 short windows into 2D mel-spectrogram grids, and runs a compact Convolutional Neural Network (CNN) to **detect specific

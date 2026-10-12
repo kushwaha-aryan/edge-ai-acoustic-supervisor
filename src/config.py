@@ -1,4 +1,4 @@
-"""Global configuration and constants for the Edge AI Earbud Supervisor.
+"""Global configuration and constants for the Edge AI Acoustic Supervisor.
 
 Single source of truth for project paths and fixed hyperparameters.
 Referenced by all other modules. Keep this file consistent with the
