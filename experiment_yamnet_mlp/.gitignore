@@ -1,0 +1,4 @@
+# runs/ (mlp_head.keras, scaler.joblib, class_names.txt, meta.json) is committed for reproducibility.
+
+# Locally extracted YAMNet embedding cache - never commit (regenerable)
+cache/

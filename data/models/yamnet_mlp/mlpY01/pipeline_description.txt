@@ -1,0 +1,24 @@
+Saved pipeline description - YAMNet frozen embeddings + MLP head (production)
+
+run-name: mlpY01
+promoted to production (decision D14): 2026-10-14
+origin: experiment_yamnet_mlp/runs/mlpY01
+training run saved at (UTC): 2026-10-13
+extract dir: data/embeddings/yamnet/yamnet_extract (train 7021 / val 1618 clips)
+feature extractor: frozen YAMNet SavedModel (https://tfhub.dev/google/yamnet/1); per-clip mean of the 1024-d frame embeddings
+head input: sklearn StandardScaler fit on the train per-clip mean embeddings
+MLP head: Dense(256, relu) -> Dropout(0.3) -> Dense(17, softmax), 266769 params
+training: Adam lr 0.001, sparse categorical crossentropy, batch size 32, seed 42,
+          up to 50 epochs with early stopping (patience 5) on val_loss; stopped after 14 epochs
+validation clip-level metrics: accuracy 0.8109, macro F1 0.7719, weighted F1 0.8117
+test split: never loaded
+class names: saved in index order as class_names.txt (17 classes)
+
+scaler.joblib is joblib-serialized; mlp_head.keras is a Keras SavedModel-format file.
+Reload with joblib.load and tf.keras.models.load_model. Feeding the same standardized
+per-clip mean YAMNet embeddings reproduces the reported validation metrics.
+
+The frozen YAMNet extractor and preprocessing are shared with the archived YAMNet + logistic
+pipeline (data/models/yamnet_logistic/yamnet_demo); only the scored head differs. The other
+training seeds (mlpY02, mlpY03) are kept under experiment_yamnet_mlp/runs/; to switch the
+production run set config.YAMNET_MLP_RUN to another promoted run directory name.

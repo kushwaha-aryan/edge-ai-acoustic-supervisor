@@ -276,19 +276,23 @@ The machine-learning architecture is **frozen and does not change** as documenta
 **Do NOT replace the CNN with large pretrained/audio-transformer architectures** (e.g., AudioSet-style AST models
 at 86M+ parameters). Such models violate the edge/parameter budget. Hugging Face / pretrained audio models may be
 used **only as optional external baselines** for comparison in the report — they are never the project's on-device
-(deployed) model. **Exception (decision D13, 2026-10-12):** the **YAMNet + logistic** pipeline is adopted as the
-project's **official final / best-performing model** for the report — validation clip accuracy **0.7769**, well above
-the locked CNN (clip 0.4994) — while the locked CNN above **remains the on-device architecture** (YAMNet is ~3.7M
+(deployed) model. **Exception (decision D14, 2026-10-14):** the **YAMNet + MLP** pipeline is adopted as the
+project's **official final / best-performing model** for the report — validation clip accuracy **0.8109** and
+macro-F1 **0.7719** (mlpY01), well above the locked CNN (clip 0.4994) and above the earlier YAMNet + logistic
+path (0.7769 / 0.7426) — while the locked CNN above **remains the on-device architecture** (YAMNet is ~3.7M
 params / ~17 MB, far over the `<100K` edge budget, so it cannot run on the target device; the finalized edge model is
 the CNN). The four-stage supervisor architecture (§2.1, §2A) is independent of the classifier internals: whatever N
-and whatever profile is active, the same one model feeds the same policy → decision → response chain.
+and whatever profile is active, the same one model feeds the same policy → decision → response chain. The YAMNet +
+logistic path (D13) is kept unchanged as an archived reference model.
 
-**Final inference entry point (implementation, 2026-10-12):** the final YAMNet + logistic path is implemented once in
-`src/inference/yamnet_logistic.py` — path resolution from `src/config.py` (never the working directory), loading and
-consistency-checking of the saved scaler / classifier / class names, the 16 kHz mono first-15-s preprocessing, the
-per-clip mean 1024-d embedding, and explicit `FinalPipelineError` failures with **no CNN and no other fallback**. It is
-reused by `scripts/demo_yamnet.py` and `scripts/demo_table.py`. This is the offline classification core; live streaming
-capture and the 200 ms rolling buffer (Phase 4, below) are still pending and will call this same module.
+**Final inference entry point (implementation, 2026-10-14):** the production YAMNet + MLP path is implemented once in
+`src/inference/yamnet_mlp.py` (decision D14) — path resolution from `src/config.py` (never the working directory),
+loading and consistency-checking of the saved scaler / MLP head / class names, the 16 kHz mono first-15-s
+preprocessing, the per-clip mean 1024-d embedding, and explicit `FinalPipelineError` failures with **no logistic
+head, no CNN and no other fallback**. It is reused by `scripts/demo_yamnet.py` and `scripts/demo_table.py`. The
+archived YAMNet + logistic implementation remains at `src/inference/yamnet_logistic.py` unchanged. This is the
+offline classification core; live streaming capture and the 200 ms rolling buffer (Phase 4, below) are still pending
+and will call this same module.
 
 ### 2.7 Explored architecture variants (experimental — NOT adopted)
 
@@ -302,7 +306,8 @@ pipeline, and the test split is never opened.
 |---|---|---|---|---|
 | `experiment_binary_cnn_lr/` (exp01) | 17 binary CNNs, 56,129 params each, one sigmoid per class | sklearn `LogisticRegression` (lbfgs) | 0.4732 | **0.5902** |
 | `experiment_binary_cnn_mlp/` (mlp01) | same 17 binary CNNs (reused, frozen) | tf.keras MLP 17 → 64 → 17 (softmax) | 0.4748 | **0.5828** |
-| YAMNet + logistic (**official final / best model**, `scripts/demo_table.py`) | frozen YAMNet embeddings | LDA-prewhitened logistic | — | **0.7769** |
+| YAMNet + logistic (**archived reference**, `src/inference/yamnet_logistic.py`) | frozen YAMNet embeddings | LDA-prewhitened logistic | — | **0.7769** |
+| YAMNet + MLP (**official final / best model**, decision D14, `src/inference/yamnet_mlp.py`) | frozen YAMNet embeddings | tf.keras MLP (1024→256→17, dropout 0.3) | — | **0.8109** |
 
 **Conclusion (honest):** both binary-CNN variants land at ~0.58–0.59 clip accuracy — far below the YAMNet pipeline
 (0.7769) and essentially equal to each other — so the second-stage **head choice (logistic vs MLP) is not the
@@ -381,6 +386,64 @@ least:
 
 **Demo pipeline:** Speaker/phone → laptop mic → raw PCM → preprocessing → CNN → event probability → user policy →
 temporal verification → Context Response Engine → supervisor interface (fields above).
+
+### 2A.6 Implementation (Phase 5 decision layer)
+
+The decision layer is implemented as pure software in `src/routing/` — no ML, no retraining, and it never imports the
+perception stage:
+
+- `src/routing/preferences.py` — `TriggerPolicy`, `UserPreferences`, `PreferenceError`, `disabled_preferences()`. A
+  missing class entry is treated as **disabled** (absence is never an enabled trigger); class names validate against
+  `config.TRIGGER_CLASS_NAMES` and target modes against `config.AUDIO_MODES`. Per-entry: enable/disable,
+  `target_mode` (`None` = explicit no-action), confidence threshold, `confirm_windows`, `release_seconds`,
+  `cooldown_seconds`, `high_priority` (type C), `critical` + `quick_action_label` (type D), `notify` (type B).
+- `src/routing/supervisor.py` — `Supervisor` (`update`, `confirm_quick_action`, `reject_quick_action`) returning a
+  frozen `SupervisorDecision`. It consumes any object exposing `.label`/`.confidence` (duck-typed `PredictionLike`,
+  the contract of `src.inference.yamnet_logistic.Prediction`); it never imports TensorFlow or the inference module.
+  Behavior is deterministic: time enters through an explicit `now` argument.
+- `src/routing/__init__.py` exports the public API.
+- `tests/test_routing_preferences.py` and `tests/test_routing_supervisor.py` cover the pure logic with synthetic
+  predictions (stdlib `unittest`; no audio, model, or dataset loaded).
+
+The §2A.3 hard boundary is honored mechanically: `confirm_quick_action` / `reject_quick_action` return
+`executed=False` unconditionally; the supervisor surfaces an action and never calls, sends, or dispatches anything.
+
+**Proposed defaults pending approval** (configurable values, not measured results):
+
+- `config.MODE_TRANSPARENCY = "Transparency Mode"` and `config.AUDIO_MODES` — added so the Phase 5 mode list
+  "(Max ANC / Transparency / Safety / Standby / none)" maps onto real constants; before this the config defined only
+  `MODE_MAX_ANC`, `MODE_SAFETY`, `MODE_STANDBY`.
+- `config.RESPONSE_COOLDOWN_SECONDS = float(config.TRIGGER_RELEASE_SECONDS)` (5.0 s) — the §2A.2 duplicate-suppression
+  cooldown had no numeric default in the blueprint.
+- Default preference set = **all classes disabled** (`disabled_preferences()`): nothing is invented; the user (or a
+  later phase) enables specific classes. The default high-priority and critical sets are therefore **empty**.
+
+### 2A.7 Application interface (local UI, implemented 2026-10-12)
+
+`src/app/` makes the policy → decision → response flow **visible and operable** on top of the real inference and
+routing layers; it duplicates no decision rules and adds no model:
+
+- `src/app/service.py` — `SampleCatalog` (deterministic allow-list of existing **validation** clips: `clip_splits.csv`
+  `split == val` rows joined on `clip_id` with `phase2a_clip_ledger.csv` `status == kept` rows, up to 2 per class in
+  taxonomy order; only allow-listed `clip_id`s are ever classified, so no client path reaches the predictor),
+  `build_preferences()` (validates a JSON policy payload into `UserPreferences`, mapping `PreferenceError` to a
+  user-facing `AppError`), `SupervisorSession` (one `Supervisor` plus an explicit virtual clock advanced from the UI,
+  so release/cooldown are exercised deterministically), and `AppService` (the single entry point; the predictor is
+  loaded lazily and injectable, so tests never import TensorFlow).
+- `src/app/server.py` — a stdlib `http.server` server (`ThreadingHTTPServer`) exposing `GET /`, `/app.css`, `/app.js`,
+  `/api/config` and `POST /api/preferences`, `/api/classify`, `/api/step`, `/api/quick-action`. `AppError` → HTTP 400;
+  bound to `127.0.0.1` for single local use; no web framework and **no new dependency**.
+- `src/app/web/` — a single-page interface (vanilla HTML/CSS/JS, `fetch`): trigger-policy table with example profile
+  presets, a bundled-clip picker, predicted class + confidence + top-k, and the supervisor decision/state
+  (idle / pending / verified / released), notification/warning, release timer and the presented quick action.
+- `scripts/run_supervisor_app.py` — CLI entry point (`.venv/Scripts/python scripts/run_supervisor_app.py`, default
+  `http://127.0.0.1:8000`).
+
+Scope stays **simulated and honest**: no live-microphone capture (clips are existing validation audio only), no earbud
+hardware is driven, and a confirmed quick action is presentation-only (`executed` is always `False`). The interface
+reuses the real `src/inference` pipeline (decision D13) and the real `src/routing` decision engine. Covered by
+`tests/test_app_service.py` and `tests/test_app_server.py` (stdlib `unittest`; no TensorFlow, audio, or external
+network in tests).
 
 ---
 
@@ -631,6 +694,11 @@ negatives for safety-relevant selected triggers.
 - Implement the **release timer**: after a trigger is absent for a configured period, restore the preferred audio
   mode.
 - Output is a **decision signal** to be handed to existing ANC hardware (see §1.3 clarification).
+- **Status (2026-10-12): decision layer implemented** in `src/routing/` (`preferences.py`, `supervisor.py`) with unit
+  tests — see §2A.6 — and a **local interactive interface** exposing it is implemented in `src/app/` (see §2A.7).
+  Audio-mode actuation remains *simulated* (no real ANC hardware is driven); the layer produces the decision signal
+  only. Proposed defaults (`MODE_TRANSPARENCY`, `AUDIO_MODES`, `RESPONSE_COOLDOWN_SECONDS`, and the all-disabled
+  default preference set) are documented in §2A.6 and await user approval.
 
 ### Phase 6 — Demo, Report & Deployment Polish
 
@@ -650,6 +718,13 @@ negatives for safety-relevant selected triggers.
   spectrograms, demo GIF/video.
 - Final report: merge blueprint conceptual sections with actual results (real numbers only) and viva defense answers.
 - **Do NOT attempt embedded/ARM Cortex-M deployment this semester** — mention only as future work.
+
+- **Status (2026-10-12): the non-live portion is partly available.** A local, single-page interface (`src/app/`, §2A.7)
+  already demonstrates the supervisor interface state (detected event + confidence, active profile, trigger
+  enabled/disabled, verification state, current audio mode, notification/warning, presented user-confirmed quick
+  action, and restoration) using bundled **validation** clips through the real inference + routing path — no live mic,
+  no hardware. The live phone→laptop-mic demo, the phone-distance script, profile-switch demonstration and the
+  demo GIF/video remain **not started** (Phase 4 live capture is still gated on user authorization).
 
 ---
 
@@ -749,6 +824,8 @@ Every material change to the original Blueprint + Phase Plan is recorded here. N
 
 | Date | Change | Reason | Status |
 |---|---|---|---|
+| 2026-10-12 | **Local interactive application layer added (`src/app/`, §2A.7) — the user-facing interface over the real inference + routing path.** New: `src/app/service.py` (`SampleCatalog` allow-listing existing validation clips, `build_preferences()` validating the JSON payload into `UserPreferences`, `SupervisorSession` with an explicit virtual clock, `AppService` with a lazily-loaded injectable predictor), `src/app/server.py` (stdlib `http.server`/`ThreadingHTTPServer`; `GET /`, `/app.css`, `/app.js`, `/api/config` and `POST /api/preferences`, `/api/classify`, `/api/step`, `/api/quick-action`; `AppError` → HTTP 400; bound to `127.0.0.1`), `src/app/web/{index.html,app.css,app.js}` (single-page vanilla UI: policy table + example presets, bundled-clip picker, prediction + top-k, and the supervisor decision/state incl. presented quick action), `scripts/run_supervisor_app.py` (CLI entry; default `http://127.0.0.1:8000`). **Four scope decisions taken with the user before building:** stdlib UI (no framework, no new dependency); input = existing **validation** clips only (no browser upload, no live mic); mode vocabulary = `config.AUDIO_MODES` (the `scripts/demo_earbud_config.py` labels `"Max ANC Mode"`/`"Alert Mode"` are **not** used; `"Alert Mode"` is not a valid config mode) — reported, not silently reconciled; live-microphone capture excluded (`sounddevice` not installed). The interface **reuses** `src/routing` for all decision rules and `src/inference` for prediction (no rule duplication, no new model); the §2A.3 boundary holds (`executed` always `False`). Honesty: the UI states SIMULATED mode changes, bundled clips, no hardware control, no live mic. Added `tests/test_app_service.py` + `tests/test_app_server.py` (temp catalog + fake predictor; no TensorFlow/audio/network) — full suite now **70 tests, all pass** (38 prior + 32 new); `py_compile` clean. Verified once end-to-end with the **real** model: a Siren validation clip → predicted `Siren` 0.9997 → VERIFIED, mode → Safety Transparency Mode → released → restored to Maximum ANC Mode. No model, dataset, split, seed, metric, or inference artifact changed; nothing retrained; test split not accessed; new modules use docstrings only; nothing committed. | User-directed task: add a visible, interactive user-facing frontend wired to the real Phase 5 preference/supervisor logic and the existing inference pipeline, with inputs validated, errors explained, honest SIMULATED scope, focused tests, and no new framework/dependency. | **Done (application layer)** |
+| 2026-10-12 | **Phase 5 decision layer implemented in `src/routing/` (Context Response Engine — pure software, no ML).** Added `src/routing/preferences.py` (`TriggerPolicy`, `UserPreferences`, `PreferenceError`, `disabled_preferences()`) and `src/routing/supervisor.py` (`Supervisor`, frozen `SupervisorDecision`, `VerificationState`, duck-typed `PredictionLike`, `QuickActionResult`); `src/routing/__init__.py` now exports the public API. The layer consumes a prediction result plus preferences and returns an explicit decision implementing response types A–E: audio-mode response incl. the explicit no-action case, notification (§2A.4 wording), high-priority warning (C), user-confirmed quick action (D, presentation-only) and state management (E: release timer + preferred-mode restoration, cooldown/duplicate suppression, log). The `§2A.3` hard boundary is enforced mechanically — `confirm_quick_action`/`reject_quick_action` return `executed=False` unconditionally and nothing is dispatched. The perception stage is **not** imported (verified: importing `src.routing` loads neither `tensorflow` nor `src.inference.yamnet_logistic`); time enters via an explicit `now` for determinism. Added `config.MODE_TRANSPARENCY`, `config.AUDIO_MODES`, `config.RESPONSE_COOLDOWN_SECONDS` and documented them as **proposed defaults pending approval** (§2A.6): the blueprint's Phase 5 mode list needed a plain "Transparency" constant the config lacked, `§2A.2`'s cooldown had no numeric default, and the default preference set is **all-disabled** (nothing invented). Added stdlib-`unittest` suites `tests/test_routing_preferences.py` + `tests/test_routing_supervisor.py` (38 tests, all pass; synthetic predictions only; release/cooldown tested deterministically without sleeping). No model, dataset, split, seed, metric, or inference artifact changed; nothing retrained; test split not accessed; the new `src/routing/` modules use docstrings only (no inline code comments); nothing committed. **Open design questions left for the user (not silently decided):** (a) the config/`demo_earbud_config.py` mode taxonomy mismatch (config has "Maximum ANC Mode" while the demo uses "Max ANC Mode"/"Alert Mode"/"Transparency Mode"/"Safety Transparency Mode"); (b) default high-priority/critical class sets (blueprint's "e.g. smoke alarm" is not a supported class); (c) the `RESPONSE_COOLDOWN_SECONDS` default duration; (d) multi-class arbitration was handled as latest-verified-wins (single active trigger) — documented as a simplification. | User-directed task: build the Phase 5 supervisor decision engine that consumes prediction results + validated user preferences to produce explicit responses, honoring the §2A.3 quick-action boundary, with focused tests; if the blueprint leaves essential behavior unspecified, document proposed defaults and report the ambiguity rather than inventing behavior. Implemented the parts the blueprint fully specifies and parametrized the rest. | **Done (decision layer; proposed defaults await approval)** |
 | 2026-10-12 | **Final inference pipeline integrated into `src/inference/` (application entry point).** Added `src/inference/yamnet_logistic.py`: the single, reusable final prediction path (frozen YAMNet embeddings → per-clip mean 1024-d → saved `StandardScaler` → saved multinomial `LogisticRegression` → project class labels). It resolves all artifact paths from `src/config.py` (`YAMNET_HUB_DIR`, `YAMNET_LOGISTIC_ROOT/RUN/DIR`, `YAMNET_EMBED_DIM`, `YAMNET_TOP_K`, `YAMNET_URL`; new section "Final inference pipeline (decision D13)"), so nothing depends on the working directory; loads and validates the saved scaler/classifier/class-names (embedding dim 1024, `coef_` = N×1024, `classes_` = 0..N-1, names == `TRIGGER_CLASS_NAMES`) and raises an explicit `FinalPipelineError` on missing artifacts, unreadable audio, wrong embedding shape or mismatched class ordering. **No CNN fallback and no other model fallback, ever.** Preprocessing is identical to training (mono downmix, `soxr_hq` → 16 kHz, first 15 s, per-clip mean). Artifacts are loaded, never retrained; the test split is not accessed. `scripts/demo_yamnet.py` and `scripts/demo_table.py` now reuse this module instead of duplicating loading/preprocessing (CLI flags and output contract unchanged; `demo_table.py` drops its private `joblib`/`demo_yamnet` loading). Docs: blueprint §2.6 (entry-point note) and §7 Phase 4 (offline core in place), README repository layout (`inference/` line). Validated clip accuracy **0.7769** is a **validation** number, unchanged and not recomputed. Source/doc only: no model, dataset, split, seed, or metric changed; nothing committed. | User-directed task: make the YAMNet + logistic pipeline the application's final prediction entry point with config-derived paths, explicit errors, no CNN fallback, and no retraining. | **Done (integration)** |
 | 2026-10-12 | **Project renamed: the official title is now "Edge AI Acoustic Supervisor" (naming/documentation only).** The human-facing project title was changed from "Edge AI Earbud Supervisor" to **Edge AI Acoustic Supervisor** in `README.md` (title heading), `FINAL_PROJECT_BLUEPRINT.md` (title heading; the `**Title:**` field now reads "Edge AI Acoustic Supervisor — Smart Context-Aware Framework for Next-Generation Earphones"), and the module docstring of `src/config.py`. All other prose is unchanged: architecture, phases, decisions, experiment results, metrics and the implementation plan are preserved verbatim. The GitHub repository is **not** renamed in this task (the remote stays `edge-ai-earbud-supervisor`), and the archived original PDF filenames (`docs/original_proposal/Edge_AI_Earbud_Project_Blueprint .pdf`, `Edge_AI_Earbud_Phase_Plan.pdf`) are left as-is because they are historical file names. No model code, trained weights, datasets, experiment results, or the inference pipeline were changed; no model was retrained and the test split was not accessed. | Naming task requested by the user: adopt "Edge AI Acoustic Supervisor" as the official project name, consistently, without altering technical content. | **Done (naming only)** |
 | 2026-10-12 | **GitHub-readiness artifact/model audit completed; mlp run metadata made portable; locked-CNN training history now persisted.** Read-only audit of all tracked model artifacts (no files/history changed) found the repo already GitHub-ready: every required inference artifact is tracked (locked CNN `baseline_A.keras`, `lightweight_cnn.keras`, `presetD/E_freqpool.keras`, the 17+17 experiment CNNs, and the final `data/models/yamnet_logistic/yamnet_demo/{classifier.joblib, scaler.joblib, class_names.txt, pipeline_description.txt}`); the largest tracked file is 712 KB and tracked `*.keras`/`*.joblib` total ~26.5 MB; `.git` is 19.30 MiB (1,912 loose objects, 0 packs). **No Git LFS needed** (far under the 100 MiB/file hard limit and the 1 GiB repo guidance) and **no `.gitignore` change required** (datasets `data/raw` 8 GB, `data/processed*` 606 MB, `data/embeddings` 85 MB, `data/models/yamnet_hub` 17 MB, `experiment_binary_cnn_mlp/cache` 26 MB, `.venv/`, `.idea/`, `urbansound8k_header.bin`, `results/*` are all correctly ignored; no secrets found). Two approved follow-ups implemented: (1) **portable run metadata** - `experiment_binary_cnn_mlp/train_binary_cnn_mlp.py` gains a `_portable()` helper and now writes `cnn_source` and `z_cache.dir` repo-relative in POSIX form (absolute only if outside the repo root); the committed `experiment_binary_cnn_mlp/runs/mlp01/meta.json` was retro-edited to the same form (`experiment_binary_cnn_lr/runs/exp01`, `experiment_binary_cnn_mlp/cache`) - representation-only, since no consumer reads these fields (the demo reads `mlp.clip_val_accuracy`) and no metric/history value changed. (2) **training-history persistence** - `scripts/run_phase3a_training.py` now writes `data/models/<run-name>.history.json` (run name, epochs, parameter count, per-epoch metric series, per-epoch seconds, elapsed seconds) alongside the saved model, overwrite-guarded like the model, so future locked-CNN runs keep their per-epoch history (existing `exp01`/`mlp01` history unaffected; no retraining performed). Documentation-only + source change; no data/model-parameter/eval artifact altered; test split untouched. | Standing rule 1 (living spec must reflect the final decision): record the GitHub-readiness audit verdict and the two approved follow-ups at the time they were produced. | **Done (user-approved 2026-10-12)** |

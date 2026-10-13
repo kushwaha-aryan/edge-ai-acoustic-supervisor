@@ -76,9 +76,10 @@ be sent as a command to that hardware's own ANC system; in this project the mode
 
 **ML architecture (on-device, fixed):** one lightweight CNN, **<100K parameters** target, 16 kHz input, 200 ms windows
 with 50% overlap, 64 mel bands, FFT 1024, hop 512, CPU/local inference. Large pretrained audio transformers (e.g.,
-AST at 86M+ params) are **not** the on-device model. **Final model (decision D13, 2026-10-12):** the project's
-official final / best-performing model is **YAMNet + logistic** (validation clip accuracy **0.7769**), which exceeds
-the edge budget and is reported as the final result; the lightweight CNN remains the on-device architecture.
+AST at 86M+ params) are **not** the on-device model. **Final model (decision D14, 2026-10-14):** the project's
+official final / best-performing model is **YAMNet + MLP** (validation clip accuracy **0.8109**, macro-F1 **0.7719**),
+which supersedes the YAMNet + logistic path (D13) that is kept unchanged as an archived reference; the locked CNN
+remains the on-device architecture (YAMNet exceeds the <100K edge budget).
 
 ## 4. Context Response Engine
 
@@ -172,8 +173,11 @@ validation analysis are EXECUTED, including the controlled experiments (preset A
 `--pool-freq-only`, clip-level evaluation), the YAMNet frozen-embedding baseline (fit + report; now the official
 final / best model, decision D13), and two isolated architecture-comparison experiments (per-class binary CNNs with
 a logistic head and with an MLP
-head; experimental only). All Phase 3B **test-split** evaluation, longer-hyperparameter training, and Phases 4-6
-remain **gated on explicit user authorization**.
+head; experimental only). The **Phase 5 decision layer** (Context Response Engine) is implemented as pure software
+with unit tests (§8 item 4), and a **local interactive interface** now wires that decision layer and the real
+inference path together so the whole policy → decision → response flow is visible and operable (§8 item 5). All
+Phase 3B **test-split** evaluation, longer-hyperparameter training, live-capture (Phase 4) actuation, and the Phase 6
+demo remain **gated on explicit user authorization**.
 
 In phase order, what is actually in place:
 
@@ -194,11 +198,13 @@ In phase order, what is actually in place:
      checkpoint): val window accuracy **0.3804**, macro-F1 **0.3861**; clip mean-softmax 0.5414 / 0.5113 / 0.5321.
    Presets B/C/D/E approved; preset A remains the locked baseline. Preset D features built (train 127,398 / val
    29,363 windows); preset D and E trained with `--pool-freq-only` (25,937 params, time axis preserved).
-   YAMNet frozen-embedding baseline scaffolded, extracted (8,639 clips, 87,985 frames, 0 failures), and **fit**:
-   validation-side-by-side logistic-head 0.7769 / 0.7426 / 0.7791 vs zero-shot 0.6273 / 0.5955 / 0.6135 vs the CNN
-   (`baseline_A` clips) 0.4994 / 0.4689 / 0.5193 — **adopted (decision D13, 2026-10-12) as the project's official
-   final / best-performing model** (validation clip accuracy 0.7769). The locked CNN remains the on-device model
-   (YAMNet exceeds the <100K edge budget); see §2.6.
+YAMNet frozen-embedding baseline scaffolded, extracted (8,639 clips, 87,985 frames, 0 failures), and **fit**:
+validation-side-by-side logistic-head 0.7769 / 0.7426 / 0.7791 vs zero-shot 0.6273 / 0.5955 / 0.6135 vs the CNN
+(`baseline_A` clips) 0.4994 / 0.4689 / 0.5193. The YAMNet + MLP head (trained with seed 42; three-seed comparison
+reported in the blueprint) achieved validation clip accuracy **0.8109** and macro-F1 **0.7719** (mlpY01) and was
+**adopted (decision D14, 2026-10-14) as the project's official final / best-performing model**, superseding the
+YAMNet + logistic path (D13) which is kept unchanged as an archived reference. The locked CNN remains the on-device
+model (YAMNet exceeds the <100K edge budget); see §2.6.
    - Two **isolated architecture-comparison experiments** (experimental only, **NOT adopted**; self-contained at the
      repo root, nothing in `data/` or the locked pipeline modified, test split never opened): a per-class
      **binary-CNN** first stage — 17 binary CNNs (one sigmoid per trigger class; 56,129 params each) trained on the
@@ -210,8 +216,33 @@ In phase order, what is actually in place:
      Both are far below the YAMNet pipeline (0.7769) and roughly equal to each other, so swapping the head does
      **not** close the gap — the frozen-CNN feature stage is the limit. See blueprint §2.7.
 
+4. **Phase 5 - Trigger Policy, Temporal Verification & Context Response Engine** (`src/routing/`): decision layer
+   IMPLEMENTED as pure software (no ML, no retraining, perception stage never imported). `preferences.py` defines the
+   per-class `TriggerPolicy` / `UserPreferences` (validated against the 17-class taxonomy and the audio-mode set);
+   `supervisor.py` consumes a prediction (`.label` / `.confidence`) plus preferences and returns an explicit
+   `SupervisorDecision` implementing response types A–E (audio-mode response incl. the no-action case, notification,
+   high-priority warning, user-confirmed quick action, state management: release timer + preferred-mode restoration,
+   cooldown/duplicate suppression, log). The §2A.3 quick-action boundary is enforced in code: `executed` is always
+   `False` and nothing is dispatched. Time is explicit (`now`) so behavior is deterministic. Covered by 38 stdlib
+   `unittest` tests (`tests/test_routing_preferences.py`, `tests/test_routing_supervisor.py`), run with
+   `python -m unittest discover -s tests -t . -p "test_*.py"`. Audio-mode actuation and live capture (Phase 4) are
+   not wired up yet; proposed defaults (`MODE_TRANSPARENCY`, `AUDIO_MODES`, `RESPONSE_COOLDOWN_SECONDS`, all-disabled
+   default preference set) await user approval (blueprint §2A.6).
+
+5. **Application interface** (`src/app/`, `scripts/run_supervisor_app.py`): a **local, single-page interface** that
+   wires the real final inference path (YAMNet + logistic, decision D13) and the Phase 5 decision layer into one
+   visible workflow — choose a trigger policy, classify a bundled validation clip, watch the supervisor return its
+   decision and state, and confirm or dismiss a presented quick action. Served with the Python standard library only
+   (`http.server`; no web framework, no new dependency). Clips come from the existing validation split
+   (`data/splits/clip_splits.csv` val rows joined on `clip_id` with `data/provenance/phase2a_clip_ledger.csv` kept
+   rows); the predictor is loaded lazily and only allow-listed `clip_id`s are ever classified. It is explicitly
+   **SIMULATED**: no live-microphone capture, no earbud-hardware control, and confirming a quick action is
+   presentation-only (`executed` is always `False`). Launch with
+   `.venv/Scripts/python scripts/run_supervisor_app.py` and open the printed URL (default `http://127.0.0.1:8000`).
+   Covered by `tests/test_app_service.py` and `tests/test_app_server.py` (no TensorFlow/audio/network in tests).
+
 Splits must pass the mandatory validation gate (proportion + per-class distribution + leakage + spectrogram +
-artifact checks) before any training - Phase 2A/2B gates currently PASS. Phases 4-6 not started.
+artifact checks) before any training - Phase 2A/2B gates currently PASS. Phase 4 live capture and Phase 6 not started.
 
 Before any training, dataset splits must pass a mandatory validation gate: proportion check, per-class distribution
 similarity, duplicate/leakage check, representative spectrogram comparison across splits, and detection of excessive
@@ -251,11 +282,12 @@ src/                All source code
   preprocessing/    Phase 2 - audio -> mel-spectrogram conversion
   models/           Phase 3 - CNN architecture definition
   training/         Phase 3 - training loop, evaluation, metrics
-  inference/        Final prediction entry point: YAMNet embeddings + logistic head (Phase 4 live capture next)
-  routing/          Phase 5 - trigger policy, temporal verification, Context Response Engine
+  inference/        Production prediction entry point: YAMNet embeddings + MLP head (Phase 4 live capture next)
+  routing/          Phase 5 - trigger policy, temporal verification, Context Response Engine (decision layer implemented)
+  app/              Local interactive interface (stdlib HTTP server + single-page UI) over inference + routing
 notebooks/          Jupyter notebooks for exploration & visualization
-scripts/            CLI entry points to run phases end-to-end
-tests/              Unit tests
+scripts/            CLI entry points to run phases end-to-end (run_supervisor_app.py launches the interface)
+tests/              Unit tests (Phase 5 decision layer + application interface)
 results/            Saved models, metrics, plots (gitignored)
 experiment_binary_cnn_lr/   Isolated CNN -> logistic comparison experiment (experimental only; runs/ gitignored)
 experiment_binary_cnn_mlp/  Isolated CNN -> MLP comparison experiment (experimental only; runs/ gitignored)

@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-"""Run the YAMNet + logistic pipeline on a random sample of VALIDATION clips.
+"""Run the YAMNet + MLP pipeline on a random sample of VALIDATION clips.
 
 Draws NUM_CASES clips at random (without replacement) from the whole
 validation split only: data/splits/clip_splits.csv filtered to split == val,
 joined on clip_id with data/provenance/phase2a_clip_ledger.csv filtered to
-status == kept. Every clip runs the application's final prediction path
-src/inference/yamnet_logistic.py (its audio loader, YAMNet loader and predictor
+status == kept. Every clip runs the application's production prediction path
+src/inference/yamnet_mlp.py (its audio loader, YAMNet loader and predictor
 are reused by import; the saved model and YAMNet signature are loaded once per
 run). A clip that fails to load
 or classify is printed as a row with ERROR and its reason, counted separately
@@ -25,7 +25,7 @@ Usage:
   .venv/Scripts/python scripts/demo_table.py --seed 12345
 
 The sample is small, so its accuracy varies from run to run; the accuracy on
-all 1,618 validation clips is 0.7769.
+all 1,618 validation clips is 0.8109.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src import config
-from src.inference import yamnet_logistic
+from src.inference import yamnet_mlp
 
 SPLIT_CSV = ROOT / "data" / "splits" / "clip_splits.csv"
 LEDGER_CSV = ROOT / "data" / "provenance" / "phase2a_clip_ledger.csv"
@@ -277,10 +277,10 @@ def main() -> int:
     rng = random.Random(seed)
     sample = rng.sample(pool, num_cases)
 
-    pipeline = yamnet_logistic.load_saved_pipeline()
+    pipeline = yamnet_mlp.load_saved_pipeline()
     names = list(pipeline.class_names)
     print(f"saved pipeline: {pipeline.model_dir}")
-    signature = yamnet_logistic.load_yamnet_signature()
+    signature = yamnet_mlp.load_yamnet_signature()
 
     rows: list[list[str]] = []
     correct = 0
@@ -303,10 +303,10 @@ def main() -> int:
         if class_counts is not None:
             class_counts["shown"] += 1
         try:
-            audio = yamnet_logistic.load_audio(
+            audio = yamnet_mlp.load_audio(
                 _clip_path(ledger_row.get("local_path", clip_id)))
-            order, proba = yamnet_logistic.embed_and_predict(
-                signature, audio, pipeline.scaler, pipeline.classifier)
+            order, proba = yamnet_mlp.embed_and_predict(
+                signature, audio, pipeline.scaler, pipeline.head)
             predicted = names[order[0]]
             confidence = f"{proba[order[0]]:.2%}"
             duration = f"{audio.shape[0] / config.SAMPLE_RATE:.2f}"

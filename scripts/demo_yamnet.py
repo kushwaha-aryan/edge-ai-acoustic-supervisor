@@ -1,20 +1,20 @@
 #!/usr/bin/env python
-"""Demo the final YAMNet + logistic pipeline on a WAV file or a mic capture.
+"""Demo the production YAMNet + MLP pipeline on a WAV file or a mic capture.
 
-CLI wrapper around the application's final prediction entry point,
-`src.inference.yamnet_logistic` (decision D13, 2026-10-12). All model loading
+CLI wrapper around the application's production prediction entry point,
+`src.inference.yamnet_mlp` (decision D14, 2026-10-14). All model loading
 and preprocessing live in that module; this script only handles argument
 parsing, the optional microphone capture and the top-3 ASCII display. It
 classifies one audio block: mono downmix, soxr_hq resample to 16 kHz, keep only
 the first 15 s (identical to the training extract), per-clip mean of the 1024-d
 YAMNet frame embeddings, standardized by the saved scaler and scored by the
-saved logistic head. Prints the top-3 classes with ASCII probability bars and
+saved MLP head. Prints the top-3 classes with ASCII probability bars and
 the configured simulated earbud response next to each.
 
-The classifier is the saved YAMNet + logistic pipeline (validation clip
-accuracy 0.7769); this demo never falls back to the locked CNN or any other
-model. If the final pipeline cannot load or score the input, the error is
-reported explicitly and the process exits nonzero.
+The classifier is the saved YAMNet + MLP pipeline (validation clip
+accuracy 0.8109); this demo never falls back to the logistic head, the locked
+CNN or any other model. If the production pipeline cannot load or score the
+input, the error is reported explicitly and the process exits nonzero.
 
 Safety: every response line is labelled (SIMULATED); the demo NEVER plays
 sound and NEVER contacts real emergency services. Short audio (< 1 s after
@@ -46,37 +46,37 @@ import numpy as np
 
 from demo_earbud_config import EARBUD_RESPONSES
 from src import config
-from src.inference import yamnet_logistic
+from src.inference import yamnet_mlp
 
 DEFAULT_HUB_DIR = config.YAMNET_HUB_DIR
-DEFAULT_MODEL_ROOT = config.YAMNET_LOGISTIC_ROOT
+DEFAULT_MODEL_ROOT = config.YAMNET_MLP_ROOT
 YAMNET_URL = config.YAMNET_URL
-EMBED_KEY = yamnet_logistic.EMBED_KEY
-SCORE_KEY = yamnet_logistic.SCORE_KEY
+EMBED_KEY = yamnet_mlp.EMBED_KEY
+SCORE_KEY = yamnet_mlp.SCORE_KEY
 BAR_WIDTH = 24
 TOP_N = config.YAMNET_TOP_K
 
 
 def _resolve_model_dir(explicit: str | None, root: Path) -> Path:
     """Return the run directory holding the saved scaler and classifier."""
-    return yamnet_logistic.resolve_model_dir(explicit, root)
+    return yamnet_mlp.resolve_model_dir(explicit, root)
 
 
 def _load_yamnet(hub_dir: Path) -> object:
     """Load the frozen YAMNet signature, preferring the offline copy."""
-    return yamnet_logistic.load_yamnet_signature(hub_dir)
+    return yamnet_mlp.load_yamnet_signature(hub_dir)
 
 
 def _load_wav(path: Path) -> np.ndarray:
     """Mono 16 kHz first-15-s float array, exactly like the training extract."""
-    return yamnet_logistic.load_audio(path)
+    return yamnet_mlp.load_audio(path)
 
 
 def _embed_and_predict(signature: object, y: np.ndarray,
                        scaler: object, clf: object) -> tuple[list[int],
                                                              np.ndarray]:
-    """Mean frame embedding, then standardized logistic probabilities."""
-    return yamnet_logistic.embed_and_predict(signature, y, scaler, clf)
+    """Mean frame embedding, then standardized MLP probabilities."""
+    return yamnet_mlp.embed_and_predict(signature, y, scaler, clf)
 
 
 def _record_mic(seconds: int) -> np.ndarray:
@@ -122,7 +122,7 @@ def main() -> int:
     parser.add_argument(
         "--model-dir", default=None,
         help="directory with the saved scaler + classifier (default: the "
-             "single run under data/models/yamnet_logistic)",
+             "single run under data/models/yamnet_mlp)",
     )
     parser.add_argument(
         "--hub-dir", default=None,
@@ -134,7 +134,7 @@ def main() -> int:
                          "SECONDS")
 
     hub_dir = Path(args.hub_dir) if args.hub_dir else DEFAULT_HUB_DIR
-    pipeline = yamnet_logistic.load_saved_pipeline(args.model_dir)
+    pipeline = yamnet_mlp.load_saved_pipeline(args.model_dir)
     names = list(pipeline.class_names)
     _validate_responses(names)
     signature = _load_yamnet(hub_dir)
@@ -148,7 +148,7 @@ def main() -> int:
               "other alteration is applied.")
 
     order, proba = _embed_and_predict(signature, y, pipeline.scaler,
-                                      pipeline.classifier)
+                                      pipeline.head)
     print(f"classifying: {source_label} ({duration:.2f} s at "
           f"{config.SAMPLE_RATE:,} Hz mono, first "
           f"{config.TRUNCATE_SECONDS:.0f} s kept)")

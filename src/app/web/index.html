@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edge AI Acoustic Supervisor</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>Edge AI Acoustic Supervisor</h1>
+  <p class="sub">Interactive supervisor interface. Configure your trigger policy, classify a bundled validation clip, and watch the decision engine respond.</p>
+  <p class="banner" id="honesty">SIMULATED - audio-mode changes are software state only; no earbud hardware is controlled. No live microphone is used. A confirmed quick action is presentation-only and executes nothing.</p>
+</header>
+
+<main>
+  <section id="panel-policy">
+    <h2>1. Trigger policy</h2>
+    <p class="hint">A class with no enabled policy produces a correct no-action decision. Enable only what you want the supervisor to act on.</p>
+    <div class="row">
+      <label>Preferred mode (restored when a trigger clears)
+        <select id="preferred-mode"></select>
+      </label>
+      <label>Profile name
+        <input id="profile-name" type="text" value="Custom" size="18">
+      </label>
+    </div>
+    <div class="row">
+      <button id="preset-commute" type="button">Example: Commuting</button>
+      <button id="preset-home" type="button">Example: Home and Family</button>
+      <button id="preset-clear" type="button">Clear all</button>
+    </div>
+    <div class="table-wrap">
+      <table id="policy-table">
+        <thead>
+          <tr>
+            <th>On</th><th>Class</th><th>Target mode</th><th>Conf</th>
+            <th>Confirm</th><th>Release s</th><th>Cool s</th>
+            <th>Priority</th><th>Critical</th><th>Quick action label</th><th>Notify</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button id="apply" type="button" class="primary">Apply preferences</button>
+      <span id="policy-status" class="status"></span>
+    </div>
+  </section>
+
+  <section id="panel-audio">
+    <h2>2. Audio clip and prediction</h2>
+    <p class="hint">Clips are drawn from the project's existing validation split; the real YAMNet + MLP pipeline classifies the selected file.</p>
+    <div class="row">
+      <label class="grow">Clip
+        <select id="clip-select"></select>
+      </label>
+      <button id="analyze" type="button" class="primary">Analyze clip</button>
+    </div>
+    <div id="prediction" class="readout">No clip analyzed yet.</div>
+    <div id="top-k" class="bars"></div>
+  </section>
+
+  <section id="panel-supervisor">
+    <h2>3. Supervisor decision</h2>
+    <div class="state-line">
+      <span class="state-badge" id="state-badge">idle</span>
+      <span>Current mode: <strong id="current-mode">-</strong></span>
+      <span>Preferred mode: <strong id="preferred-mode-view">-</strong></span>
+      <span>Virtual clock: <strong id="clock">0.00</strong> s</span>
+    </div>
+    <div class="row">
+      <button id="feed" type="button">Feed detection</button>
+      <label>Advance seconds
+        <input id="advance" type="number" value="1" min="0" step="0.5" size="4">
+      </label>
+      <button id="advance-btn" type="button">Advance time (no detection)</button>
+      <button id="reset" type="button">Reset session</button>
+    </div>
+    <div id="decision" class="readout">Apply preferences, then feed a detection.</div>
+    <div id="quick-action" class="quick-action hidden">
+      <span id="qa-text"></span>
+      <button id="qa-confirm" type="button" class="primary">Confirm</button>
+      <button id="qa-reject" type="button">Dismiss</button>
+      <span id="qa-result" class="status"></span>
+    </div>
+    <h3>Reasoning</h3>
+    <ul id="reasons" class="reasons"></ul>
+    <h3>Event log</h3>
+    <ul id="log" class="log"></ul>
+  </section>
+</main>
+
+<footer>
+  <p>Bundled clips: existing validation audio only. Nothing is written, sent, or executed. See README and FINAL_PROJECT_BLUEPRINT.md.</p>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

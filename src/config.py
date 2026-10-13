@@ -206,16 +206,18 @@ INFERENCE_CADENCE_MS = 200                        # match WINDOW_SIZE_MS
 # from the real dataset after Phase 1 (blueprint §7 Phase 3).
 
 # ---------------------------------------------------------------------------
-# Final inference pipeline (decision D13, 2026-10-12)
+# Archived reference pipeline (decision D13, 2026-10-12; superseded by D14)
 # ---------------------------------------------------------------------------
-# The project's official final / best-performing prediction path is the frozen
-# YAMNet embedding extractor followed by the saved StandardScaler + multinomial
-# logistic head (validated clip accuracy 0.7769 on the 1,618-clip validation
-# split; blueprint section 2.6 Exception / section 2.7). The locked CNN
-# (section 2.6) stays the on-device model but is NOT the final inference path;
-# the inference entry point src/inference/yamnet_logistic.py never falls back
-# to it. All paths derive from PROJECT_ROOT, so they never depend on the
-# working directory. The trained artifacts are loaded, never retrained:
+# The frozen YAMNet embedding extractor followed by the saved StandardScaler +
+# multinomial logistic head (validated clip accuracy 0.7769 on the 1,618-clip
+# validation split). This was the project's official final prediction path
+# from D13 and is now kept unchanged as an archived reference model only:
+# decision D14 (section below) promotes the MLP head instead (blueprint
+# section 2.6 Exception / section 2.7). src/inference/yamnet_logistic.py still
+# loads these artifacts and never falls back to the locked CNN (section 2.6),
+# which stays the on-device model but is NOT an inference entry point. All
+# paths derive from PROJECT_ROOT, so they never depend on the working
+# directory. The trained artifacts are loaded, never retrained:
 #   YAMNET_HUB_DIR/            frozen YAMNet SavedModel (offline copy; URL fallback)
 #   YAMNET_LOGISTIC_DIR/       scaler.joblib + classifier.joblib + class_names.txt
 YAMNET_URL = "https://tfhub.dev/google/yamnet/1"
@@ -227,6 +229,27 @@ YAMNET_EMBED_DIM = 1024
 YAMNET_TOP_K = 3
 
 # ---------------------------------------------------------------------------
+# Production inference pipeline (decision D14, 2026-10-14)
+# ---------------------------------------------------------------------------
+# The project's official final / best-performing prediction path is the frozen
+# YAMNet embedding extractor followed by the saved StandardScaler + MLP head
+# (validated clip accuracy 0.8109 and macro F1 0.7719 on the 1,618-clip
+# validation split; blueprint section 2.6 Exception / section 2.7). It
+# supersedes the YAMNet + logistic path (D13, section above), which is kept
+# unchanged as an archived reference model; D14 was chosen because the MLP head
+# beat the logistic head on the same validation split across three seeds (see
+# the promoted run's meta.json). src/inference/yamnet_mlp.py is the production
+# entry point and loads only these artifacts - never the logistic head, never
+# the locked CNN. All paths derive from PROJECT_ROOT, so they never depend on
+# the working directory. The trained artifacts are loaded, never retrained:
+#   YAMNET_MLP_DIR/            scaler.joblib + mlp_head.keras + class_names.txt
+# Change YAMNET_MLP_RUN to promote a different already-trained run under
+# YAMNET_MLP_ROOT without touching code.
+YAMNET_MLP_ROOT = DATA_DIR / "models" / "yamnet_mlp"
+YAMNET_MLP_RUN = "mlpY01"
+YAMNET_MLP_DIR = YAMNET_MLP_ROOT / YAMNET_MLP_RUN
+
+# ---------------------------------------------------------------------------
 # Live capture (Phase 4) / trigger policy + routing (Phase 5)
 # ---------------------------------------------------------------------------
 MAX_DEVICE_CHANNELS = 1
@@ -234,8 +257,9 @@ ROLLING_BUFFER_WINDOWS = 1
 # Temporal verification: a candidate trigger must persist for this many
 # consecutive windows before a mode switch (blueprint §7 Phase 5). Safety-
 # relevant triggers may instead require a single high-confidence window.
-TRIGGER_CONFIRM_WINDOWS = 3
+TRIGGER_CONFIRM_WINDOWS: int = 3
 TRIGGER_RELEASE_SECONDS = 5                       # restore preferred mode after trigger absent
+RESPONSE_COOLDOWN_SECONDS = float(TRIGGER_RELEASE_SECONDS)  # duplicate-alert suppression window
 TRIGGER_MIN_CONFIDENCE = 0.80                     # per-policy default threshold
 
 # Audio-mode outputs (simulated; see blueprint §3). Modes remain valid; what
@@ -243,3 +267,5 @@ TRIGGER_MIN_CONFIDENCE = 0.80                     # per-policy default threshold
 MODE_MAX_ANC = "Maximum ANC Mode"          # brown/pink noise mask playback
 MODE_SAFETY = "Safety Transparency Mode"   # direct unbuffered mic passthrough
 MODE_STANDBY = "Low-Power Standby Mode"    # reduced sampling rate loop
+MODE_TRANSPARENCY = "Transparency Mode"    # plain (non-safety) passthrough
+AUDIO_MODES: tuple[str, ...] = (MODE_MAX_ANC, MODE_TRANSPARENCY, MODE_SAFETY, MODE_STANDBY)
