@@ -3,10 +3,10 @@
 
 Serves the single-page interface and its JSON API on 127.0.0.1 using only the
 Python standard library, then prints the URL to open. The interface reuses the
-project's real final inference path (YAMNet + logistic, decision D13) and the
+project's real final inference path (YAMNet + MLP, decision D14) and the
 real Phase 5 decision engine; it adds no new model, no retraining, and no live
-microphone. Everything shown is SIMULATED on the bundled validation clips and
-no earbud hardware is controlled.
+microphone. It classifies bundled validation clips or a user-uploaded WAV file.
+Everything shown is SIMULATED and no earbud hardware is controlled.
 
 Usage:
   .venv/Scripts/python scripts/run_supervisor_app.py

@@ -57,6 +57,12 @@
       </label>
       <button id="analyze" type="button" class="primary">Analyze clip</button>
     </div>
+    <div class="row">
+      <label class="grow">Upload WAV (<=10 MB, <=60 s)
+        <input id="upload-wav" type="file" accept=".wav,audio/wav" />
+      </label>
+      <button id="upload-run" type="button">Run uploaded WAV</button>
+    </div>
     <div id="prediction" class="readout">No clip analyzed yet.</div>
     <div id="top-k" class="bars"></div>
   </section>

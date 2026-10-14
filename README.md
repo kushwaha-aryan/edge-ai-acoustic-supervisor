@@ -11,6 +11,71 @@ The AI acts as a **high-level supervisor / decision layer** that sits on top of 
 macro-windows (~200 ms) to detect context changes, while the actual audio path is handled by low-level scripts. It does
 **not** perform real-time wave inversion.
 
+First and foremost this is an **audio-classification-based acoustic supervision system**: it analyzes environmental
+sound, classifies it, and uses the prediction to drive configurable supervisory decisions. It runs entirely in software
+on a laptop. Adaptive noise cancellation on earbuds is a **potential future application** of this supervisor, not the
+current deliverable: the present implementation performs no live-microphone capture and controls no ANC hardware.
+
+---
+
+## Quick start (Windows)
+
+Prerequisites: Python 3.11+ and the dependencies in `requirements.txt`. A virtual environment `.venv/` is expected at
+the repository root.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+Launch the local interface (a Python standard-library HTTP server bound to `127.0.0.1`):
+
+```powershell
+.venv\Scripts\python scripts\run_supervisor_app.py
+```
+
+Open the printed URL (default `http://127.0.0.1:8000`) in a browser and stop the server with Ctrl+C. The first
+classification loads the YAMNet + MLP model and can take a few seconds.
+
+## Using the interface
+
+The single-page interface has three panels.
+
+**1. Trigger policy.** Enable the classes you want the supervisor to act on, and set per-class target mode, confidence
+threshold, confirmation windows, release/cooldown timers, priority/critical flags, and an optional quick-action label.
+Presets ("Commuting", "Home and Family") fill common configurations. Click **Apply preferences** to activate a profile;
+the supervisor session resets to that policy.
+
+**2. Audio clip, prediction, and upload.** There are two ways to get audio in:
+
+- **Bundled validation clips** - pick one from the **Clip** dropdown (drawn from the locked validation split) and click
+  **Analyze clip**.
+- **Upload a WAV** - choose a local `.wav` file (max 10 MB, up to 60 seconds) and click **Run uploaded WAV**.
+
+Both paths run the **same production pipeline**: audio -> the existing preprocessing -> **YAMNet + MLP (`mlpY01`)** ->
+class probabilities -> the Phase 5 supervisor. Uploaded bytes are validated (WAV header, size, and duration when it can
+be read) and written to a temporary file that is always deleted, so nothing is persisted. Non-WAV, oversized,
+over-length, or corrupt files are rejected with a readable error.
+
+**3. Supervisor decision.** After a classification the interface shows the **filename** (upload path only), the
+**predicted class** and **confidence**, the Top-K distribution, and the **supervisor decision**: detected class, whether
+the class is an enabled trigger, verification state, current vs. preferred audio mode, notification/warning, any
+presented quick action, release-timer/cooldown state, reasoning, and the event log. "Feed detection", "Advance time",
+and the quick-action confirm/dismiss buttons drive the temporal verification rules.
+
+### Current limitations
+
+- **Software simulation only** - audio-mode changes (Max ANC / Transparency / Safety / Standby) are software state; no
+  earbud or noise-cancellation hardware is controlled.
+- **No validated live-microphone inference** - there is no live-capture path; inputs are the bundled validation clips
+  or a user-uploaded WAV file.
+- **No physical earbud / ANC hardware integration** - earbuds and adaptive noise cancellation are a potential future
+  application, not part of this implementation.
+- **Model quality is reported on the validation split only.** The held-out **test** split has not been evaluated, so no
+  test-set accuracy or generalization claim is made here.
+- The quick action is presentation-only and never executes automatically.
+
 ---
 
 ## 1. Problem
@@ -171,7 +236,7 @@ Local inference is intended to **reduce dependence on cloud processing** and to 
 **Current state (2026-10-12):** dataset acquisition, validation, preprocessing, and the Phase 3A model training +
 validation analysis are EXECUTED, including the controlled experiments (preset A, preset D and preset E with
 `--pool-freq-only`, clip-level evaluation), the YAMNet frozen-embedding baseline (fit + report; now the official
-final / best model, decision D13), and two isolated architecture-comparison experiments (per-class binary CNNs with
+final / best model, decision D14), and two isolated architecture-comparison experiments (per-class binary CNNs with
 a logistic head and with an MLP
 head; experimental only). The **Phase 5 decision layer** (Context Response Engine) is implemented as pure software
 with unit tests (§8 item 4), and a **local interactive interface** now wires that decision layer and the real
@@ -230,12 +295,13 @@ model (YAMNet exceeds the <100K edge budget); see §2.6.
    default preference set) await user approval (blueprint §2A.6).
 
 5. **Application interface** (`src/app/`, `scripts/run_supervisor_app.py`): a **local, single-page interface** that
-   wires the real final inference path (YAMNet + logistic, decision D13) and the Phase 5 decision layer into one
-   visible workflow — choose a trigger policy, classify a bundled validation clip, watch the supervisor return its
-   decision and state, and confirm or dismiss a presented quick action. Served with the Python standard library only
-   (`http.server`; no web framework, no new dependency). Clips come from the existing validation split
-   (`data/splits/clip_splits.csv` val rows joined on `clip_id` with `data/provenance/phase2a_clip_ledger.csv` kept
-   rows); the predictor is loaded lazily and only allow-listed `clip_id`s are ever classified. It is explicitly
+   wires the real final inference path (YAMNet + MLP `mlpY01`, decision D14) and the Phase 5 decision layer into one
+   visible workflow — choose a trigger policy, classify a bundled validation clip **or upload a local WAV file**, watch
+   the supervisor return its decision and state, and confirm or dismiss a presented quick action. Served with the Python
+   standard library only (`http.server`; no web framework, no new dependency). Clips come from the existing validation
+   split (`data/splits/clip_splits.csv` val rows joined on `clip_id` with `data/provenance/phase2a_clip_ledger.csv` kept
+   rows); uploaded WAVs are validated and written to a temp file that is always removed; the predictor is loaded
+   lazily and only allow-listed `clip_id`s are ever classified. It is explicitly
    **SIMULATED**: no live-microphone capture, no earbud-hardware control, and confirming a quick action is
    presentation-only (`executed` is always `False`). Launch with
    `.venv/Scripts/python scripts/run_supervisor_app.py` and open the printed URL (default `http://127.0.0.1:8000`).
@@ -273,7 +339,7 @@ data/               Raw + processed datasets (gitignored)
   raw/              Downloaded dataset archives (validated copies)
   processed/        Cached .npy mel-spectrogram arrays (Phase 2, preset A)
   processed_preset_D/  Preset D train+val mel arrays (Phase 3A controlled experiment)
-  embeddings/       YAMNet frozen-embedding cache (final-model feature source; decision D13)
+  embeddings/       YAMNet frozen-embedding cache (final-model feature source; decision D14)
   splits/           Stratified train/val/test split metadata (Phase 1)
   provenance/       Per-clip source/label/metadata records (Phase 1)
 src/                All source code

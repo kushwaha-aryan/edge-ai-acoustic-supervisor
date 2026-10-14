@@ -10,6 +10,7 @@ added. It serves three static assets and four JSON endpoints, all backed by
   GET  /api/config       classes, modes, bundled clips, policy defaults
   POST /api/preferences  validate + apply a policy set (resets the session)
   POST /api/classify     run the real predictor on one allow-listed clip
+  POST /api/classify-upload run the real predictor on a client-uploaded WAV
   POST /api/step         feed one detection (or none) through the supervisor
   POST /api/quick-action confirm/reject the pending quick action
 
@@ -37,7 +38,7 @@ STATIC_FILES: dict[str, str] = {
 }
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
-MAX_BODY_BYTES = 1_000_000
+MAX_BODY_BYTES = 16 * 1024 * 1024
 
 
 def _make_handler(service: AppService) -> type[BaseHTTPRequestHandler]:
@@ -46,6 +47,7 @@ def _make_handler(service: AppService) -> type[BaseHTTPRequestHandler]:
     post_routes = {
         "/api/preferences": service.apply_preferences,
         "/api/classify": service.classify,
+        "/api/classify-upload": service.classify_upload,
         "/api/step": service.step,
         "/api/quick-action": service.quick_action,
     }

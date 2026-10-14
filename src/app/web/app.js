@@ -28,8 +28,9 @@ async function apiPost(path, body) {
 }
 
 function setStatus(node, text, isError) {
+  if (!node) return;
   node.textContent = text || "";
-  node.classList.toggle("error", Boolean(isError));
+  try { node.classList.toggle("error", Boolean(isError)); } catch (e) {}
 }
 
 function modeNamed(sub) {
@@ -283,10 +284,20 @@ function renderList(node, items) {
 
 function renderPrediction(prediction) {
   const pct = (prediction.confidence * 100).toFixed(1);
-  el("prediction").textContent =
-    "Predicted: " + prediction.label + "  (" + pct + "%)\n" +
-    "Clip: " + prediction.clip.source_dataset + " / " + prediction.clip.file_name + "\n" +
-    "Dataset label for this clip: " + prediction.clip.label;
+  const lines = ["Predicted: " + prediction.label + "  (" + pct + "%)"];
+  if (prediction.clip) {
+    lines.push("Clip: " + prediction.clip.source_dataset + " / " + prediction.clip.file_name);
+    lines.push("Dataset label for this clip: " + prediction.clip.label);
+  } else {
+    if (prediction.file_name) {
+      lines.push("File: " + prediction.file_name);
+    }
+    if (prediction.duration_seconds != null) {
+      lines.push("Duration: " + Number(prediction.duration_seconds).toFixed(1) + "s");
+    }
+    lines.push("Source: uploaded WAV");
+  }
+  el("prediction").textContent = lines.join("\n");
   const bars = el("top-k");
   bars.innerHTML = "";
   prediction.top_k.forEach((pair) => {
@@ -454,8 +465,57 @@ async function init() {
   el("preset-commute").addEventListener("click", presetCommuting);
   el("preset-home").addEventListener("click", presetHome);
   el("preset-clear").addEventListener("click", clearAll);
+  el("upload-run").addEventListener("click", onUpload);
 
   await onApply();
 }
 
 init();
+
+async function onUpload() {
+  const input = el('upload-wav');
+  const runBtn = el('upload-run');
+  const file = input && input.files ? input.files[0] : null;
+  if (!file) {
+    el('prediction').textContent = 'No WAV file selected.';
+    return;
+  }
+  if (!file.name.toLowerCase().endsWith('.wav')) {
+    el('prediction').textContent = 'Only .wav files are allowed.';
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    el('prediction').textContent = 'File too large (limit 10 MB).';
+    return;
+  }
+  if (runBtn) runBtn.disabled = true;
+  el('prediction').textContent = 'Classifying uploaded WAV... (the first run loads YAMNet; this can take a few seconds)';
+  el('top-k').innerHTML = '';
+  try {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      const slice = bytes.subarray(i, Math.min(i + chunk, bytes.length));
+      for (let j = 0; j < slice.length; j++) binary += String.fromCharCode(slice[j]);
+    }
+    const b64 = btoa(binary);
+    const res = await fetch('/api/classify-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_name: file.name, data: b64 }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Upload classification failed');
+    }
+    renderPrediction(data.prediction);
+    renderState(data.state);
+  } catch (e) {
+    console.error(e);
+    el('prediction').textContent = 'Error: ' + (e.message || 'upload failed');
+  } finally {
+    if (runBtn) runBtn.disabled = false;
+  }
+}

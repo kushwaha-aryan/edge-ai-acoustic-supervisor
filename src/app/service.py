@@ -21,7 +21,10 @@ TensorFlow or touch audio. The decision rules live only in
 
 from __future__ import annotations
 
+import base64
 import csv
+import os
+import tempfile
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -57,6 +60,10 @@ VALIDATION_SPLIT = "val"
 KEPT_STATUS = "kept"
 DEFAULT_CLIPS_PER_CLASS = 2
 DEFAULT_PROFILE_NAME = "Baseline (all disabled)"
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_UPLOAD_DURATION_S = 60.0
+WAV_RIFF = b"RIFF"
+WAV_WAVE = b"WAVE"
 _UNSET: Any = object()
 
 
@@ -99,6 +106,26 @@ def _resolve_path(local_path: str) -> Path:
     if path.is_absolute():
         return path
     return config.PROJECT_ROOT / path
+
+
+def _validate_wav_header(data: bytes) -> None:
+    if len(data) < 12:
+        raise AppError('invalid WAV file: too short')
+    if not data.startswith(WAV_RIFF):
+        raise AppError('invalid WAV file: missing RIFF header')
+    if data[8:12] != WAV_WAVE:
+        raise AppError('invalid WAV file: missing WAVE signature')
+
+
+def _read_wav_metadata(path: Path) -> float | None:
+    try:
+        import soundfile as sf
+        with sf.SoundFile(str(path)) as f:
+            if f.samplerate > 0:
+                return float(f.frames) / float(f.samplerate)
+    except Exception:
+        pass
+    return None
 
 
 def _duration_of(row: Mapping[str, str]) -> float | None:
@@ -532,6 +559,67 @@ class AppService:
                 "top_k": top_k,
             },
         }
+
+    def classify_upload(self, payload: Mapping[str, object]) -> dict[str, object]:
+        """Classify a client-uploaded WAV file (base64) like `classify`.
+
+        The bytes are validated (WAV header, size, duration) and written to a
+        temporary file that is always removed; nothing is persisted.
+        """
+        file_name = payload.get("file_name")
+        data_b64 = payload.get("data")
+        if not isinstance(file_name, str) or not file_name:
+            raise AppError("file_name is required")
+        if not isinstance(data_b64, str) or not data_b64:
+            raise AppError("data is required")
+        try:
+            blob = base64.b64decode(data_b64, validate=True)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            raise AppError(f"invalid base64 data: {exc}") from exc
+        if len(blob) > MAX_UPLOAD_BYTES:
+            raise AppError(f"file too large (limit {MAX_UPLOAD_BYTES} bytes)")
+        _validate_wav_header(blob)
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(blob)
+            duration_s = _read_wav_metadata(Path(tmp_path))
+            if duration_s is not None and duration_s > MAX_UPLOAD_DURATION_S:
+                raise AppError(
+                    f"file too long (limit {MAX_UPLOAD_DURATION_S:g}s)"
+                )
+            with self._lock:
+                predictor = self._get_predictor()
+                try:
+                    prediction = predictor.predict_file(tmp_path)
+                except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                    raise AppError(
+                        f"could not classify uploaded file {file_name!r}: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
+                label = str(getattr(prediction, "label", ""))
+                confidence = float(getattr(prediction, "confidence", 0.0))
+                top_k = [
+                    [str(name), float(prob)] for name, prob in prediction.top_k()
+                ]
+                self._session.set_prediction(label, confidence)
+                state = self._session.snapshot()
+            return {
+                "state": state,
+                "source_dataset": "uploaded",
+                "prediction": {
+                    "file_name": file_name,
+                    "duration_seconds": duration_s,
+                    "label": label,
+                    "confidence": confidence,
+                    "top_k": top_k,
+                },
+            }
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def step(self, payload: Mapping[str, object]) -> dict[str, object]:
         advance = _as_float(payload.get("advance_seconds", 0.0), "advance_seconds")
