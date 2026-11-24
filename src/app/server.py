@@ -8,6 +8,10 @@ added. It serves three static assets and four JSON endpoints, all backed by
   GET  /app.css          stylesheet
   GET  /app.js           interface script
   GET  /api/config       classes, modes, bundled clips, policy defaults
+  GET  /api/model        model initialization status + measured stage timings
+  POST /api/model/init   start/retry model initialization (background thread)
+  GET  /api/activity     live backend pipeline phase for one request id
+  GET  /api/history      recent inference records + session statistics
   POST /api/preferences  validate + apply a policy set (resets the session)
   POST /api/classify     run the real predictor on one allow-listed clip
   POST /api/classify-upload run the real predictor on a client-uploaded WAV
@@ -26,7 +30,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from src.app.service import AppError, AppService, SampleCatalog
 
@@ -45,6 +49,7 @@ def _make_handler(service: AppService) -> type[BaseHTTPRequestHandler]:
     """Build the request handler bound to one AppService instance."""
 
     post_routes = {
+        "/api/model/init": lambda _: service.start_initialization(),
         "/api/preferences": service.apply_preferences,
         "/api/classify": service.classify,
         "/api/classify-upload": service.classify_upload,
@@ -107,6 +112,18 @@ def _make_handler(service: AppService) -> type[BaseHTTPRequestHandler]:
                     self._send_static("app.js")
                 elif path == "/api/config":
                     self._send_json(200, service.config())
+                elif path == "/api/model":
+                    # First dashboard load starts real initialization; later
+                    # calls only report status (never reload an loaded model).
+                    if service.monitor.init_status()["status"] == "not_started":
+                        service.start_initialization()
+                    self._send_json(200, service.monitor.init_status())
+                elif path == "/api/activity":
+                    query = parse_qs(urlsplit(self.path).query)
+                    request_id = query.get("request_id", [None])[0]
+                    self._send_json(200, service.monitor.activity(request_id))
+                elif path == "/api/history":
+                    self._send_json(200, service.monitor.history())
                 else:
                     self._send_json(404, {"error": f"not found: {path}"})
             except AppError as exc:
@@ -153,6 +170,9 @@ def main(argv: list[str] | None = None) -> int:
 
     catalog = SampleCatalog()
     service = AppService(catalog)
+    # Real model work starts at launch in a background thread; the dashboard
+    # reports measured progress instead of simulating a loading animation.
+    service.start_initialization()
     httpd = create_server(service, args.host, args.port)
     host, port = httpd.server_address[0], httpd.server_address[1]
     print(f"Edge AI Acoustic Supervisor interface: http://{host}:{port}")

@@ -45,6 +45,7 @@ import numpy as np
 
 from src import config
 from src.inference import yamnet_logistic as _logistic
+from src.timing import stage
 
 SCALER_NAME = "scaler.joblib"
 HEAD_NAME = "mlp_head.keras"
@@ -170,46 +171,49 @@ def load_saved_pipeline(model_dir: str | Path | None = None) -> SavedPipeline:
     try:
         import tensorflow as tf
 
-        scaler = joblib.load(scaler_path)
-        head = tf.keras.models.load_model(str(head_path))
+        with stage("scaler_load"):
+            scaler = joblib.load(scaler_path)
+        with stage("mlp_load"):
+            head = tf.keras.models.load_model(str(head_path))
     except Exception as exc:  # noqa: BLE001 - re-raised with context
         raise FinalPipelineError(
             f"could not load the saved pipeline in {run_dir}: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
 
-    names = tuple(
-        line.strip()
-        for line in names_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    )
-    if not names:
-        raise FinalPipelineError(f"class_names.txt in {run_dir} is empty")
+    with stage("metadata_load"):
+        names = tuple(
+            line.strip()
+            for line in names_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if not names:
+            raise FinalPipelineError(f"class_names.txt in {run_dir} is empty")
 
-    scaler_dim = int(getattr(scaler, "n_features_in_", EMBED_DIM))
-    if scaler_dim != EMBED_DIM:
-        raise FinalPipelineError(
-            f"scaler expects {scaler_dim} features but the YAMNet embedding is "
-            f"{EMBED_DIM}-d"
-        )
-    in_dim, out_dim = _head_dims(head)
-    if in_dim is not None and in_dim != EMBED_DIM:
-        raise FinalPipelineError(
-            f"MLP head expects {in_dim} input features but the YAMNet embedding "
-            f"is {EMBED_DIM}-d"
-        )
-    if out_dim is not None and out_dim != len(names):
-        raise FinalPipelineError(
-            f"MLP head outputs {out_dim} classes but class_names.txt lists "
-            f"{len(names)}"
-        )
-    if names != config.TRIGGER_CLASS_NAMES:
-        raise FinalPipelineError(
-            "class_names.txt does not match the project trigger taxonomy in "
-            "src/config.py TRIGGER_CLASS_NAMES; refusing to label predictions "
-            "with a mismatched class list"
-        )
-    return SavedPipeline(run_dir, scaler, head, names)
+        scaler_dim = int(getattr(scaler, "n_features_in_", EMBED_DIM))
+        if scaler_dim != EMBED_DIM:
+            raise FinalPipelineError(
+                f"scaler expects {scaler_dim} features but the YAMNet embedding "
+                f"is {EMBED_DIM}-d"
+            )
+        in_dim, out_dim = _head_dims(head)
+        if in_dim is not None and in_dim != EMBED_DIM:
+            raise FinalPipelineError(
+                f"MLP head expects {in_dim} input features but the YAMNet "
+                f"embedding is {EMBED_DIM}-d"
+            )
+        if out_dim is not None and out_dim != len(names):
+            raise FinalPipelineError(
+                f"MLP head outputs {out_dim} classes but class_names.txt lists "
+                f"{len(names)}"
+            )
+        if names != config.TRIGGER_CLASS_NAMES:
+            raise FinalPipelineError(
+                "class_names.txt does not match the project trigger taxonomy in "
+                "src/config.py TRIGGER_CLASS_NAMES; refusing to label "
+                "predictions with a mismatched class list"
+            )
+        return SavedPipeline(run_dir, scaler, head, names)
 
 
 def load_yamnet_signature(hub_dir: str | Path | None = None) -> object:
@@ -219,12 +223,14 @@ def load_yamnet_signature(hub_dir: str | Path | None = None) -> object:
 
 def load_audio(path: str | Path) -> np.ndarray:
     """Mono 16 kHz first-15-s float array, exactly like the training extract."""
-    return _logistic.load_audio(path)
+    with stage("audio_decode"):
+        return _logistic.load_audio(path)
 
 
 def embed_clip(signature: object, y: np.ndarray) -> np.ndarray:
     """Return the (1, EMBED_DIM) mean YAMNet frame embedding of one clip."""
-    return _logistic.embed_clip(signature, y)
+    with stage("embedding"):
+        return _logistic.embed_clip(signature, y)
 
 
 def _standardized_proba(scaler: object, head: object,
@@ -234,8 +240,10 @@ def _standardized_proba(scaler: object, head: object,
             f"embedding has {mean_embed.shape[1]} features, expected "
             f"{EMBED_DIM}"
         )
-    scaled = scaler.transform(mean_embed).astype(np.float32)
-    proba = head.predict(scaled, batch_size=1, verbose=0)[0]
+    with stage("scaling"):
+        scaled = scaler.transform(mean_embed).astype(np.float32)
+    with stage("mlp_classification"):
+        proba = head.predict(scaled, batch_size=1, verbose=0)[0]
     return np.asarray(proba, dtype=np.float64)
 
 
@@ -286,7 +294,8 @@ class Predictor:
     @property
     def signature(self) -> object:
         if self._signature is None:
-            self._signature = load_yamnet_signature(self._hub_dir)
+            with stage("yamnet_load"):
+                self._signature = load_yamnet_signature(self._hub_dir)
         return self._signature
 
     def predict_audio(self, y: np.ndarray) -> Prediction:

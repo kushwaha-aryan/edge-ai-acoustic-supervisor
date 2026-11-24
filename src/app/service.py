@@ -23,15 +23,23 @@ from __future__ import annotations
 
 import base64
 import csv
+import importlib
 import os
 import tempfile
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Protocol
 
 from src import config
+from src.app.monitor import (
+    INFERENCE_STAGES,
+    DashboardMonitor,
+    valid_request_id,
+)
 from src.routing.preferences import (
     PreferenceError,
     TriggerPolicy,
@@ -43,6 +51,7 @@ from src.routing.supervisor import (
     Supervisor,
     SupervisorDecision,
 )
+from src.timing import TimingSink, activate, deactivate, stage
 
 __all__ = [
     "AppError",
@@ -50,6 +59,7 @@ __all__ = [
     "SampleCatalog",
     "SupervisorSession",
     "AppService",
+    "DashboardMonitor",
     "build_preferences",
     "decision_to_dict",
 ]
@@ -137,6 +147,19 @@ def _duration_of(row: Mapping[str, str]) -> float | None:
             except ValueError:
                 continue
     return None
+
+
+def _to_ms(seconds: float) -> float:
+    return round(max(0.0, float(seconds)) * 1000.0, 3)
+
+
+def _decision_summary(state: Mapping[str, object]) -> str:
+    decision = state.get("decision")
+    if not decision or not isinstance(decision, Mapping):
+        return "No decision yet"
+    if decision.get("verified"):
+        return "Verified: " + str(decision.get("audio_mode") or "no mode change")
+    return str(decision.get("verification_state", "idle"))
 
 
 class SampleCatalog:
@@ -478,6 +501,7 @@ class AppService:
         self._predictor_factory = predictor_factory or _load_default_predictor
         self._predictor: PredictorLike | None = None
         self._lock = threading.Lock()
+        self._monitor = DashboardMonitor()
         self._session = SupervisorSession(
             disabled_preferences(
                 profile_name=DEFAULT_PROFILE_NAME,
@@ -489,10 +513,91 @@ class AppService:
     def catalog(self) -> SampleCatalog:
         return self._catalog
 
+    @property
+    def monitor(self) -> DashboardMonitor:
+        return self._monitor
+
     def _get_predictor(self) -> PredictorLike:
         if self._predictor is None:
             self._predictor = self._predictor_factory()
         return self._predictor
+
+    def start_initialization(self) -> dict[str, object]:
+        """Start (or report) model initialization in a background thread.
+
+        Idempotent while initialization is in progress. The real work is timed
+        with a context-bound sink, so concurrent requests keep their own timers.
+        """
+        current = self._monitor.init_status()["status"]
+        if current in ("initializing", "ready"):
+            return self._monitor.init_status()
+        sink = TimingSink(on_stage=self._monitor.init_phase)
+        if not self._monitor.begin_init(sink):
+            return self._monitor.init_status()
+        thread = threading.Thread(
+            target=self._initialize_model,
+            args=(sink,),
+            name="model-initialization",
+            daemon=True,
+        )
+        thread.start()
+        return self._monitor.init_status()
+
+    def _initialize_model(self, sink: TimingSink) -> None:
+        started = perf_counter()
+        token = activate(sink)
+        already_loaded = False
+        try:
+            with stage("environment"):
+                for name in (
+                    "tensorflow", "tensorflow_hub", "joblib", "librosa",
+                    "soundfile",
+                ):
+                    importlib.import_module(name)
+            with self._lock:
+                if self._predictor is None:
+                    self._predictor = self._predictor_factory()
+                else:
+                    already_loaded = True
+                # Accessing the property performs the real YAMNet load; when a
+                # signature is already cached this is a no-op.
+                _ = self._predictor.signature
+            self._monitor.finish_init(perf_counter() - started, already_loaded)
+        except Exception as exc:  # noqa: BLE001 - surfaced in the model panel
+            self._monitor.fail_init(
+                perf_counter() - started,
+                f"{type(exc).__name__}: {exc}",
+            )
+        finally:
+            deactivate(token)
+
+    @staticmethod
+    def _request_id(payload: Mapping[str, object]) -> str:
+        supplied = payload.get("request_id")
+        if valid_request_id(supplied):
+            return str(supplied)
+        return f"req-{perf_counter():.6f}".replace(".", "-")
+
+    @staticmethod
+    def _timing_result(started: float, sink: TimingSink) -> dict[str, object]:
+        """Measured stage breakdown; the remainder is reported explicitly."""
+        total_ms = _to_ms(perf_counter() - started)
+        stages_ms = {
+            key: _to_ms(value) for key, value in sink.snapshot().items()
+        }
+        known = {key for key, _ in INFERENCE_STAGES if key != "other_overhead"}
+        measured_ms = round(
+            sum(value for key, value in stages_ms.items() if key in known), 3
+        )
+        stages_ms["other_overhead"] = round(
+            max(0.0, total_ms - measured_ms), 3
+        )
+        return {
+            "total_ms": total_ms,
+            "measured_ms": measured_ms,
+            "stages_ms": stages_ms,
+            "timer": "time.perf_counter",
+        }
 
     def config(self) -> dict[str, object]:
         """Everything the interface needs to render its controls."""
@@ -533,77 +638,145 @@ class AppService:
         clip_id = payload.get("clip_id")
         if not isinstance(clip_id, str) or not clip_id:
             raise AppError("clip_id is required")
-        clip = self._catalog.get(clip_id)
-        with self._lock:
-            predictor = self._get_predictor()
-            try:
-                prediction = predictor.predict_file(clip.local_path)
-            except Exception as exc:  # noqa: BLE001 - surfaced to the user
-                raise AppError(
-                    f"could not classify clip {clip_id!r}: "
-                    f"{type(exc).__name__}: {exc}"
-                ) from exc
-            label = str(getattr(prediction, "label", ""))
-            confidence = float(getattr(prediction, "confidence", 0.0))
-            top_k = [
-                [str(name), float(prob)] for name, prob in prediction.top_k()
-            ]
-            self._session.set_prediction(label, confidence)
-            state = self._session.snapshot()
-        return {
-            "state": state,
-            "prediction": {
-                "clip": clip.to_dict(),
+        request_id = self._request_id(payload)
+        started = perf_counter()
+        self._monitor.begin_request(request_id, clip_id, "validation_clip")
+        sink = TimingSink(
+            on_stage=lambda key: self._monitor.phase(request_id, key)
+        )
+        token = activate(sink)
+        try:
+            with stage("reception"):
+                clip = self._catalog.get(clip_id)
+            with self._lock:
+                predictor = self._get_predictor()
+                try:
+                    prediction = predictor.predict_file(clip.local_path)
+                except Exception as exc:  # noqa: BLE001 - surfaced to user
+                    raise AppError(
+                        f"could not classify clip {clip_id!r}: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
+                with stage("aggregation"):
+                    label = str(getattr(prediction, "label", ""))
+                    confidence = float(getattr(prediction, "confidence", 0.0))
+                    top_k = [
+                        [str(name), float(prob)] for name, prob in prediction.top_k()
+                    ]
+                    self._monitor.phase(request_id, "supervisor")
+                    self._session.set_prediction(label, confidence)
+                    state = self._session.snapshot()
+            timing = self._timing_result(started, sink)
+            self._monitor.finish_request(request_id, {
+                "request_id": request_id,
+                "file_name": clip.file_name,
+                "source": "validation_clip",
                 "label": label,
                 "confidence": confidence,
-                "top_k": top_k,
-            },
-        }
+                "duration_seconds": clip.duration_seconds,
+                "total_ms": timing["total_ms"],
+                "stages_ms": timing["stages_ms"],
+                "timestamp": datetime.now().astimezone().isoformat(
+                    timespec="milliseconds"
+                ),
+                "decision": _decision_summary(state),
+            })
+            return {
+                "state": state,
+                "prediction": {
+                    "clip": clip.to_dict(),
+                    "label": label,
+                    "confidence": confidence,
+                    "top_k": top_k,
+                },
+                "request_id": request_id,
+                "timing": timing,
+            }
+        except Exception as exc:  # noqa: BLE001 - surfaced in the activity panel
+            self._monitor.fail_request(
+                request_id, f"{type(exc).__name__}: {exc}"
+            )
+            raise
+        finally:
+            deactivate(token)
 
     def classify_upload(self, payload: Mapping[str, object]) -> dict[str, object]:
         """Classify a client-uploaded WAV file (base64) like `classify`.
 
         The bytes are validated (WAV header, size, duration) and written to a
-        temporary file that is always removed; nothing is persisted.
+        temporary file that is always removed; nothing is persisted. Timing and
+        activity are recorded per request id so concurrent uploads stay separate.
         """
         file_name = payload.get("file_name")
-        data_b64 = payload.get("data")
-        if not isinstance(file_name, str) or not file_name:
-            raise AppError("file_name is required")
-        if not isinstance(data_b64, str) or not data_b64:
-            raise AppError("data is required")
+        request_id = self._request_id(payload)
+        started = perf_counter()
+        self._monitor.begin_request(
+            request_id,
+            file_name if isinstance(file_name, str) else "(unnamed upload)",
+            "uploaded",
+        )
+        sink = TimingSink(
+            on_stage=lambda key: self._monitor.phase(request_id, key)
+        )
+        token = activate(sink)
+        tmp_path: str | None = None
         try:
-            blob = base64.b64decode(data_b64, validate=True)
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            raise AppError(f"invalid base64 data: {exc}") from exc
-        if len(blob) > MAX_UPLOAD_BYTES:
-            raise AppError(f"file too large (limit {MAX_UPLOAD_BYTES} bytes)")
-        _validate_wav_header(blob)
-        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(blob)
-            duration_s = _read_wav_metadata(Path(tmp_path))
-            if duration_s is not None and duration_s > MAX_UPLOAD_DURATION_S:
-                raise AppError(
-                    f"file too long (limit {MAX_UPLOAD_DURATION_S:g}s)"
-                )
+            with stage("reception"):
+                data_b64 = payload.get("data")
+                if not isinstance(file_name, str) or not file_name:
+                    raise AppError("file_name is required")
+                if not isinstance(data_b64, str) or not data_b64:
+                    raise AppError("data is required")
+                try:
+                    blob = base64.b64decode(data_b64, validate=True)
+                except Exception as exc:  # noqa: BLE001 - surfaced to user
+                    raise AppError(f"invalid base64 data: {exc}") from exc
+                if len(blob) > MAX_UPLOAD_BYTES:
+                    raise AppError(
+                        f"file too large (limit {MAX_UPLOAD_BYTES} bytes)"
+                    )
+                _validate_wav_header(blob)
+                fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(blob)
+                duration_s = _read_wav_metadata(Path(tmp_path))
+                if duration_s is not None and duration_s > MAX_UPLOAD_DURATION_S:
+                    raise AppError(
+                        f"file too long (limit {MAX_UPLOAD_DURATION_S:g}s)"
+                    )
             with self._lock:
                 predictor = self._get_predictor()
                 try:
                     prediction = predictor.predict_file(tmp_path)
-                except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                except Exception as exc:  # noqa: BLE001 - surfaced to user
                     raise AppError(
                         f"could not classify uploaded file {file_name!r}: "
                         f"{type(exc).__name__}: {exc}"
                     ) from exc
-                label = str(getattr(prediction, "label", ""))
-                confidence = float(getattr(prediction, "confidence", 0.0))
-                top_k = [
-                    [str(name), float(prob)] for name, prob in prediction.top_k()
-                ]
-                self._session.set_prediction(label, confidence)
-                state = self._session.snapshot()
+                with stage("aggregation"):
+                    label = str(getattr(prediction, "label", ""))
+                    confidence = float(getattr(prediction, "confidence", 0.0))
+                    top_k = [
+                        [str(name), float(prob)] for name, prob in prediction.top_k()
+                    ]
+                    self._monitor.phase(request_id, "supervisor")
+                    self._session.set_prediction(label, confidence)
+                    state = self._session.snapshot()
+            timing = self._timing_result(started, sink)
+            self._monitor.finish_request(request_id, {
+                "request_id": request_id,
+                "file_name": file_name,
+                "source": "uploaded",
+                "label": label,
+                "confidence": confidence,
+                "duration_seconds": duration_s,
+                "total_ms": timing["total_ms"],
+                "stages_ms": timing["stages_ms"],
+                "timestamp": datetime.now().astimezone().isoformat(
+                    timespec="milliseconds"
+                ),
+                "decision": _decision_summary(state),
+            })
             return {
                 "state": state,
                 "source_dataset": "uploaded",
@@ -614,12 +787,21 @@ class AppService:
                     "confidence": confidence,
                     "top_k": top_k,
                 },
+                "request_id": request_id,
+                "timing": timing,
             }
+        except Exception as exc:  # noqa: BLE001 - surfaced in the activity panel
+            self._monitor.fail_request(
+                request_id, f"{type(exc).__name__}: {exc}"
+            )
+            raise
         finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            deactivate(token)
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def step(self, payload: Mapping[str, object]) -> dict[str, object]:
         advance = _as_float(payload.get("advance_seconds", 0.0), "advance_seconds")
