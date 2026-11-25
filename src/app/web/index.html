@@ -3,207 +3,151 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Edge AI Acoustic Supervisor — Inference Dashboard</title>
+<title>Edge AI Acoustic Supervisor</title>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<div class="app-shell">
+<header>
+  <h1>Edge AI Acoustic Supervisor</h1>
+  <p class="sub">Interactive supervisor interface. Configure your trigger policy, classify a bundled validation clip, and watch the decision engine respond.</p>
+  <p class="banner" id="honesty">SIMULATED - audio-mode changes are software state only; no earbud hardware is controlled. No live microphone is used. A confirmed quick action is presentation-only and executes nothing.</p>
+</header>
 
-  <header class="topbar">
-    <div class="brand">
-      <div class="wave-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div>
-        <h1>Edge AI Acoustic Supervisor</h1>
-        <p class="sub">Edge AI inference monitoring · acoustic scene supervision · local only</p>
-      </div>
+<div class="app-layout">
+<main>
+  <section id="panel-policy">
+    <h2>1. Trigger policy</h2>
+    <p class="hint">A class with no enabled policy produces a correct no-action decision. Enable only what you want the supervisor to act on.</p>
+    <div class="row">
+      <label>Preferred mode (restored when a trigger clears)
+        <select id="preferred-mode"></select>
+      </label>
+      <label>Profile name
+        <input id="profile-name" type="text" value="Custom" size="18">
+      </label>
     </div>
-    <div class="header-status">
-      <span class="model-pill" id="model-pill" data-state="loading">MODEL: CHECKING</span>
-      <span class="runtime-chip" id="runtime-chip">YAMNet → MLP</span>
+    <div class="row">
+      <button id="preset-commute" type="button">Example: Commuting</button>
+      <button id="preset-home" type="button">Example: Home and Family</button>
+      <button id="preset-clear" type="button">Clear all</button>
     </div>
-  </header>
+    <div class="table-wrap">
+      <table id="policy-table">
+        <thead>
+          <tr>
+            <th>On</th><th>Class</th><th>Target mode</th><th>Conf</th>
+            <th>Confirm</th><th>Release s</th><th>Cool s</th>
+            <th>Priority</th><th>Critical</th><th>Quick action label</th><th>Notify</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button id="apply" type="button" class="primary">Apply preferences</button>
+      <span id="policy-status" class="status"></span>
+    </div>
+  </section>
 
-  <div class="honesty-banner" id="honesty">
-    SIMULATED — audio-mode changes are software state only; no earbud hardware is controlled.
-    No live microphone is used. A confirmed quick action is presentation-only and executes nothing.
+  <section id="panel-audio">
+    <h2>2. Audio clip and prediction</h2>
+    <p class="hint">Clips are drawn from the project's existing validation split; the real YAMNet + MLP pipeline classifies the selected file.</p>
+    <div class="row">
+      <label class="grow">Clip
+        <select id="clip-select"></select>
+      </label>
+      <button id="analyze" type="button" class="primary">Analyze clip</button>
+    </div>
+    <div class="row">
+      <label class="grow">Upload WAV (<=10 MB, <=60 s)
+        <input id="upload-wav" type="file" accept=".wav,audio/wav" />
+      </label>
+      <button id="upload-run" type="button">Run uploaded WAV</button>
+    </div>
+    <div id="prediction" class="readout">No clip analyzed yet.</div>
+    <div id="top-k" class="bars"></div>
+  </section>
+
+  <section id="panel-supervisor">
+    <h2>3. Supervisor decision</h2>
+    <div class="state-line">
+      <span class="state-badge" id="state-badge">idle</span>
+      <span>Current mode: <strong id="current-mode">-</strong></span>
+      <span>Preferred mode: <strong id="preferred-mode-view">-</strong></span>
+      <span>Virtual clock: <strong id="clock">0.00</strong> s</span>
+    </div>
+    <div class="row">
+      <button id="feed" type="button">Feed detection</button>
+      <label>Advance seconds
+        <input id="advance" type="number" value="1" min="0" step="0.5" size="4">
+      </label>
+      <button id="advance-btn" type="button">Advance time (no detection)</button>
+      <button id="reset" type="button">Reset session</button>
+    </div>
+    <div id="decision" class="readout">Apply preferences, then feed a detection.</div>
+    <div id="quick-action" class="quick-action hidden">
+      <span id="qa-text"></span>
+      <button id="qa-confirm" type="button" class="primary">Confirm</button>
+      <button id="qa-reject" type="button">Dismiss</button>
+      <span id="qa-result" class="status"></span>
+    </div>
+    <h3>Reasoning</h3>
+    <ul id="reasons" class="reasons"></ul>
+    <h3>Event log</h3>
+    <ul id="log" class="log"></ul>
+  </section>
+</main>
+
+<aside id="monitor-board" class="monitor-board">
+  <h2>Inference monitor</h2>
+  <p class="hint">Live backend timings for the current and latest input.</p>
+
+  <div class="monitor-section">
+    <h3>Current request</h3>
+    <div class="monitor-line"><span>Status</span><strong id="monitor-status">idle</strong></div>
+    <div class="monitor-line"><span>Phase</span><strong id="monitor-phase">Waiting for audio</strong></div>
+    <div class="monitor-line"><span>Elapsed</span><strong id="monitor-elapsed">0 ms</strong></div>
+    <ol id="monitor-events" class="monitor-events">
+      <li class="empty">No processing events yet.</li>
+    </ol>
   </div>
 
-  <main class="dashboard">
+  <div class="monitor-section">
+    <h3>Latest timing</h3>
+    <div class="monitor-line"><span>Input</span><strong id="monitor-file">&mdash;</strong></div>
+    <div class="monitor-line"><span>Total</span><strong id="monitor-total">&mdash;</strong></div>
+    <div id="monitor-stages" class="monitor-stages"></div>
+  </div>
 
-    <section class="card model-card" id="panel-model">
-      <div class="card-head">
-        <div><span class="eyebrow">Inference runtime</span><h2>Model initialization</h2></div>
-        <span class="status-chip" id="model-status-chip">CHECKING</span>
-      </div>
-      <p class="hint" id="model-meta">Loading local YAMNet → MLP artifacts…</p>
-      <div class="progress-track"><div class="progress-fill" id="init-progress-fill"></div></div>
-      <ol class="init-stages" id="init-stages"></ol>
-      <div class="total-line"><span>Total initialization</span><strong id="init-total">—</strong></div>
-      <p class="status" id="model-error"></p>
-      <button id="model-retry" class="ghost hidden" type="button">Retry initialization</button>
-    </section>
+  <div class="monitor-section">
+    <h3>Model</h3>
+    <div class="monitor-line"><span>Status</span><strong id="monitor-model-status">checking</strong></div>
+    <div class="monitor-line"><span>Init time</span><strong id="monitor-init">&mdash;</strong></div>
+    <ol id="monitor-init-stages" class="monitor-events small"></ol>
+    <p id="model-error" class="status"></p>
+    <button id="model-retry" class="hidden" type="button">Retry model init</button>
+  </div>
 
-    <section class="card perf-card" id="panel-performance">
-      <div class="card-head">
-        <div><span class="eyebrow">Session telemetry</span><h2>Performance</h2></div>
-        <span class="status-chip subtle">LIVE SESSION</span>
-      </div>
-      <div class="metric-grid">
-        <div class="metric"><span>Predictions</span><strong id="stat-count">0</strong></div>
-        <div class="metric"><span>Average</span><strong id="stat-avg">—</strong></div>
-        <div class="metric"><span>Fastest</span><strong id="stat-min">—</strong></div>
-        <div class="metric"><span>Slowest</span><strong id="stat-max">—</strong></div>
-        <div class="metric metric-wide"><span>Model initialization</span><strong id="stat-init">—</strong></div>
-      </div>
-      <p class="hint">Per-input inference timings are separate from model startup.</p>
-    </section>
-
-    <section class="card activity-card" id="panel-activity">
-      <div class="card-head">
-        <div><span class="eyebrow">Backend telemetry</span><h2>Live activity</h2></div>
-        <span class="live-indicator" id="activity-dot"><i></i> IDLE</span>
-      </div>
-      <div class="activity-current">
-        <div class="activity-icon" aria-hidden="true">≈</div>
-        <div class="activity-copy">
-          <strong id="activity-phase">Waiting for audio input</strong>
-          <span class="hint" id="activity-detail">Submit a bundled clip or upload a WAV to start inference.</span>
-        </div>
-        <span class="activity-timer" id="activity-timer">0 ms</span>
-      </div>
-      <div class="activity-track"><div class="activity-fill" id="activity-fill"></div></div>
-      <ol class="timeline" id="activity-timeline">
-        <li class="empty">No processing events yet.</li>
-      </ol>
-    </section>
-
-    <section class="card result-card" id="panel-result">
-      <div class="card-head">
-        <div><span class="eyebrow">Latest inference</span><h2>Prediction result</h2></div>
-        <span class="status-chip" id="result-chip">NO DATA</span>
-      </div>
-      <div class="prediction-hero" id="prediction">No audio analyzed yet.</div>
-      <div class="result-grid">
-        <div class="result-item"><span>Input file</span><strong id="result-file">—</strong></div>
-        <div class="result-item"><span>Audio duration</span><strong id="result-audio">—</strong></div>
-        <div class="result-item"><span>Total processing</span><strong id="result-total">—</strong></div>
-        <div class="result-item"><span>Confidence</span><strong id="result-confidence">—</strong></div>
-      </div>
-      <div class="stage-breakdown" id="result-stages"></div>
-      <div class="decision-line"><span>Supervisor decision</span><strong id="result-decision">—</strong></div>
-      <div class="bars" id="top-k"></div>
-    </section>
-
-    <section class="card input-card" id="panel-audio">
-      <div class="card-head">
-        <div><span class="eyebrow">Audio input</span><h2>Analyze a sound</h2></div>
-        <span class="status-chip subtle">REAL PIPELINE</span>
-      </div>
-      <p class="hint">Clips come from the project's validation split. Uploads are validated locally and never persisted. Both use the same YAMNet → MLP inference path.</p>
-      <div class="row">
-        <label class="grow">Bundled validation clip
-          <select id="clip-select"></select>
-        </label>
-        <button id="analyze" type="button" class="primary">Analyze clip</button>
-      </div>
-      <div class="row">
-        <label class="grow">Upload WAV (≤10 MB, ≤60 s)
-          <input id="upload-wav" type="file" accept=".wav,audio/wav" />
-        </label>
-        <button id="upload-run" type="button">Run uploaded WAV</button>
-      </div>
-    </section>
-
-    <section class="card policy-card" id="panel-policy">
-      <div class="card-head">
-        <div><span class="eyebrow">Context / policy</span><h2>Trigger policy</h2></div>
-        <span class="status-chip subtle" id="policy-count">0 ENABLED</span>
-      </div>
-      <p class="hint">A class with no enabled policy produces a correct no-action decision. Enable only what you want the supervisor to act on.</p>
-      <div class="row">
-        <label>Preferred mode (restored when a trigger clears)
-          <select id="preferred-mode"></select>
-        </label>
-        <label>Profile name
-          <input id="profile-name" type="text" value="Custom" size="18">
-        </label>
-      </div>
-      <div class="row">
-        <button id="preset-commute" type="button">Example: Commuting</button>
-        <button id="preset-home" type="button">Example: Home and Family</button>
-        <button id="preset-clear" type="button">Clear all</button>
-      </div>
-      <div class="table-wrap">
-        <table id="policy-table">
-          <thead>
-            <tr>
-              <th>On</th><th>Class</th><th>Target mode</th><th>Conf</th>
-              <th>Confirm</th><th>Release s</th><th>Cool s</th>
-              <th>Priority</th><th>Critical</th><th>Quick action label</th><th>Notify</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="row">
-        <button id="apply" type="button" class="primary">Apply preferences</button>
-        <span id="policy-status" class="status"></span>
-      </div>
-    </section>
-
-    <section class="card supervisor-card" id="panel-supervisor">
-      <div class="card-head">
-        <div><span class="eyebrow">Decision / response</span><h2>Supervisor decision</h2></div>
-        <span class="state-badge" id="state-badge">idle</span>
-      </div>
-      <div class="state-line">
-        <span>Current mode: <strong id="current-mode">-</strong></span>
-        <span>Preferred mode: <strong id="preferred-mode-view">-</strong></span>
-        <span>Virtual clock: <strong id="clock">0.00</strong> s</span>
-      </div>
-      <div class="row">
-        <button id="feed" type="button">Feed detection</button>
-        <label>Advance seconds
-          <input id="advance" type="number" value="1" min="0" step="0.5" size="4">
-        </label>
-        <button id="advance-btn" type="button">Advance time (no detection)</button>
-        <button id="reset" type="button">Reset session</button>
-      </div>
-      <div id="decision" class="readout">Apply preferences, then feed a detection.</div>
-      <div id="quick-action" class="quick-action hidden">
-        <span id="qa-text"></span>
-        <button id="qa-confirm" type="button" class="primary">Confirm</button>
-        <button id="qa-reject" type="button">Dismiss</button>
-        <span id="qa-result" class="status"></span>
-      </div>
-      <h3>Reasoning</h3>
-      <ul id="reasons" class="reasons"></ul>
-      <h3>Event log</h3>
-      <ul id="log" class="log"></ul>
-    </section>
-
-    <section class="card history-card" id="panel-history">
-      <div class="card-head">
-        <div><span class="eyebrow">Session log</span><h2>Recent inference history</h2></div>
-        <span class="status-chip subtle">LAST 25</span>
-      </div>
-      <div class="table-wrap">
-        <table id="history-table">
-          <thead>
-            <tr><th>Time</th><th>Filename</th><th>Predicted class</th><th>Confidence</th><th>Total time</th><th>Supervisor decision</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="empty" id="history-empty">No inferences yet this session.</p>
-    </section>
-
-  </main>
-
-  <footer>
-    <p>Bundled clips: existing validation audio only. Nothing is written, sent, or executed outside this local session. See README and FINAL_PROJECT_BLUEPRINT.md.</p>
-  </footer>
+  <div class="monitor-section">
+    <h3>Session</h3>
+    <div class="monitor-line"><span>Predictions</span><strong id="monitor-count">0</strong></div>
+    <div class="monitor-line"><span>Average</span><strong id="monitor-avg">&mdash;</strong></div>
+    <div class="monitor-line"><span>Fastest / slowest</span><strong id="monitor-range">&mdash;</strong></div>
+    <div class="table-wrap">
+      <table id="history-table" class="monitor-history">
+        <thead><tr><th>Time</th><th>Class</th><th>Total</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="history-empty" class="hint">No inferences yet this session.</p>
+  </div>
+</aside>
 </div>
+
+<footer>
+  <p>Bundled clips: existing validation audio only. Nothing is written, sent, or executed. See README and FINAL_PROJECT_BLUEPRINT.md.</p>
+</footer>
+
 <script src="/app.js"></script>
 </body>
 </html>

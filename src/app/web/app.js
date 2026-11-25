@@ -1,37 +1,50 @@
 let cfg = null;
 const policyRows = {};
+
 const STAGE_ORDER = [
   "reception", "audio_decode", "scaler_load", "mlp_load", "metadata_load",
   "yamnet_load", "embedding", "scaling", "mlp_classification", "aggregation",
   "other_overhead",
 ];
 const STAGE_LABELS = {
-  reception: "Audio file reception",
-  audio_decode: "Audio decoding and preprocessing",
-  scaler_load: "Feature scaler (first use)",
-  mlp_load: "MLP model (first use)",
-  metadata_load: "Class metadata (first use)",
-  yamnet_load: "Pretrained YAMNet (first use)",
-  embedding: "YAMNet embedding extraction",
-  scaling: "Feature scaling",
+  reception: "Reception",
+  audio_decode: "Audio decode",
+  scaler_load: "Scaler load",
+  mlp_load: "MLP load",
+  metadata_load: "Metadata load",
+  yamnet_load: "YAMNet load",
+  embedding: "Embedding",
+  scaling: "Scaling",
   mlp_classification: "MLP classification",
   aggregation: "Aggregation + supervisor",
-  other_overhead: "Other request overhead",
+  other_overhead: "Other overhead",
 };
-const PHASE_ORDER = [
-  "received", "audio_decode", "embedding", "scaling", "mlp_classification",
-  "aggregation", "supervisor", "completed",
-];
+const PHASE_LABELS = {
+  received: "Receiving audio file",
+  reception: "Receiving audio file",
+  audio_decode: "Decoding audio",
+  embedding: "Extracting YAMNet embeddings",
+  scaling: "Scaling extracted features",
+  mlp_classification: "Running MLP classification",
+  aggregation: "Aggregating predictions",
+  supervisor: "Evaluating supervisor policy",
+  completed: "Prediction completed",
+  failed: "Prediction failed",
+};
 let modelTimer = null;
 let historyTimer = null;
 let latestRequestId = null;
 
-function el(id) { return document.getElementById(id); }
+function el(id) {
+  return document.getElementById(id);
+}
 
 async function apiGet(path) {
   const res = await fetch(path, { cache: "no-store" });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) {
+    throw new Error(data.error || res.statusText);
+  }
   return data;
 }
 
@@ -42,7 +55,9 @@ async function apiPost(path, body) {
     body: JSON.stringify(body || {}),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) {
+    throw new Error(data.error || res.statusText);
+  }
   return data;
 }
 
@@ -54,15 +69,9 @@ function setStatus(node, text, isError) {
 
 function fmtMs(ms) {
   const n = Number(ms);
-  if (!isFinite(n) || n < 0) return "—";
+  if (!Number.isFinite(n) || n < 0) return "—";
   if (n < 1000) return n.toFixed(n < 10 ? 2 : 1) + " ms";
   return (n / 1000).toFixed(2) + " s";
-}
-
-function fmtSeconds(seconds) {
-  const n = Number(seconds);
-  if (!isFinite(n) || n < 0) return "—";
-  return n.toFixed(Math.abs(n) < 10 ? 2 : 1) + " s";
 }
 
 function newRequestId() {
@@ -83,7 +92,9 @@ function buildModeSelect(select, defaultMode) {
     option.textContent = mode;
     select.appendChild(option);
   });
-  if (defaultMode) select.value = defaultMode;
+  if (defaultMode) {
+    select.value = defaultMode;
+  }
 }
 
 function numberCell(className, value, step, min, max) {
@@ -94,7 +105,9 @@ function numberCell(className, value, step, min, max) {
   input.value = value;
   input.step = step;
   input.min = min;
-  if (max !== undefined) input.max = max;
+  if (max !== undefined) {
+    input.max = max;
+  }
   td.appendChild(input);
   return { td, input };
 }
@@ -116,11 +129,14 @@ function buildPolicyTable() {
   cfg.classes.forEach((name) => {
     const tr = document.createElement("tr");
     tr.dataset.className = name;
+
     const on = checkboxCell("p-enabled", false);
     tr.appendChild(on.td);
+
     const nameTd = document.createElement("td");
     nameTd.textContent = name;
     tr.appendChild(nameTd);
+
     const targetTd = document.createElement("td");
     const target = document.createElement("select");
     target.className = "p-target";
@@ -137,13 +153,20 @@ function buildPolicyTable() {
     target.value = "";
     targetTd.appendChild(target);
     tr.appendChild(targetTd);
+
     const conf = numberCell("p-conf", defaults.confidence_threshold, 0.05, 0.01, 1);
+    tr.appendChild(conf.td);
     const confirm = numberCell("p-confirm", defaults.confirm_windows, 1, 1);
+    tr.appendChild(confirm.td);
     const release = numberCell("p-release", defaults.release_seconds, 0.5, 0);
+    tr.appendChild(release.td);
     const cool = numberCell("p-cool", defaults.cooldown_seconds, 0.5, 0);
+    tr.appendChild(cool.td);
     const priority = checkboxCell("p-priority", false);
+    tr.appendChild(priority.td);
     const critical = checkboxCell("p-critical", false);
-    [conf, confirm, release, cool, priority, critical].forEach((cell) => tr.appendChild(cell.td));
+    tr.appendChild(critical.td);
+
     const labelTd = document.createElement("td");
     const qalabel = document.createElement("input");
     qalabel.type = "text";
@@ -151,12 +174,21 @@ function buildPolicyTable() {
     qalabel.value = "";
     labelTd.appendChild(qalabel);
     tr.appendChild(labelTd);
+
     const notify = checkboxCell("p-notify", true);
     tr.appendChild(notify.td);
+
     policyRows[name] = {
-      enabled: on.input, target, conf: conf.input, confirm: confirm.input,
-      release: release.input, cool: cool.input, priority: priority.input,
-      critical: critical.input, qalabel, notify: notify.input,
+      enabled: on.input,
+      target,
+      conf: conf.input,
+      confirm: confirm.input,
+      release: release.input,
+      cool: cool.input,
+      priority: priority.input,
+      critical: critical.input,
+      qalabel,
+      notify: notify.input,
     };
     tbody.appendChild(tr);
   });
@@ -167,19 +199,24 @@ function buildClipSelect() {
   select.innerHTML = "";
   const groups = {};
   cfg.clips.forEach((clip) => {
-    if (!groups[clip.label]) groups[clip.label] = [];
+    if (!groups[clip.label]) {
+      groups[clip.label] = [];
+    }
     groups[clip.label].push(clip);
   });
   cfg.classes.forEach((name) => {
     const clips = groups[name];
-    if (!clips) return;
+    if (!clips) {
+      return;
+    }
     const optgroup = document.createElement("optgroup");
     optgroup.label = name;
     clips.forEach((clip) => {
       const option = document.createElement("option");
       option.value = clip.clip_id;
       const dur = clip.duration_seconds != null
-        ? " (" + clip.duration_seconds.toFixed(1) + "s)" : "";
+        ? " (" + clip.duration_seconds.toFixed(1) + "s)"
+        : "";
       option.textContent = clip.source_dataset + " / " + clip.file_name + dur;
       optgroup.appendChild(option);
     });
@@ -189,12 +226,22 @@ function buildClipSelect() {
 
 function setRow(name, spec) {
   const row = policyRows[name];
-  if (!row) return;
+  if (!row) {
+    return;
+  }
   row.enabled.checked = true;
-  if (spec.target !== undefined) row.target.value = spec.target || "";
-  if (spec.conf !== undefined) row.conf.value = spec.conf;
-  if (spec.confirm !== undefined) row.confirm.value = spec.confirm;
-  if (spec.priority) row.priority.checked = true;
+  if (spec.target !== undefined) {
+    row.target.value = spec.target || "";
+  }
+  if (spec.conf !== undefined) {
+    row.conf.value = spec.conf;
+  }
+  if (spec.confirm !== undefined) {
+    row.confirm.value = spec.confirm;
+  }
+  if (spec.priority) {
+    row.priority.checked = true;
+  }
   if (spec.critical) {
     row.critical.checked = true;
     row.qalabel.value = spec.qalabel || "";
@@ -233,11 +280,11 @@ function presetHome() {
   setRow("Alarm", { target: modeNamed("safety"), conf: 0.8, confirm: 1, priority: true });
   setRow("Glass_Breaking", {
     target: modeNamed("safety"), conf: 0.8, confirm: 1, priority: true,
-    critical: true, qalabel: "Call emergency contact",
+    critical: true, qalabel: "Call emergency contact"
   });
   setRow("Gunshot", {
     target: modeNamed("safety"), conf: 0.8, confirm: 1, priority: true,
-    critical: true, qalabel: "Call emergency contact",
+    critical: true, qalabel: "Call emergency contact"
   });
 }
 
@@ -274,195 +321,29 @@ function renderList(node, items) {
   items.forEach((item) => {
     const li = document.createElement("li");
     li.textContent = item.text;
-    if (item.cls) li.className = item.cls;
+    if (item.cls) {
+      li.className = item.cls;
+    }
     node.appendChild(li);
   });
 }
 
-// ---------------------------------------------------------- model status UI
-
-function renderModel(status) {
-  const pill = el("model-pill");
-  const chip = el("model-status-chip");
-  const state = status.status || "not_started";
-  const pillState = state === "not_started" ? "initializing" : state;
-  pill.dataset.state = pillState;
-  pill.textContent = {
-    not_started: "MODEL: PENDING",
-    initializing: "MODEL: LOADING",
-    ready: "MODEL READY",
-    failed: "MODEL FAILED",
-  }[state] || "MODEL: " + state.toUpperCase();
-  chip.textContent = state.toUpperCase();
-  setStatus(el("model-error"), state === "failed" ? (status.error || "Initialization failed") : "", state === "failed");
-  el("model-retry").classList.toggle("hidden", state !== "failed");
-  el("model-meta").textContent = (status.model || "YAMNet + MLP") +
-    " · artifacts: " + (status.model_dir || "local project path");
-
-  const rows = Array.isArray(status.stages) ? status.stages : [];
-  const list = el("init-stages");
-  list.innerHTML = "";
-  rows.forEach((row) => {
-    const li = document.createElement("li");
-    li.dataset.state = row.state || "pending";
-    const dot = document.createElement("span");
-    dot.className = "stage-dot";
-    const name = document.createElement("span");
-    name.className = "stage-name";
-    name.textContent = row.label || row.key;
-    const time = document.createElement("span");
-    time.className = "stage-time" + (row.state === "pending" ? " pending-time" : "");
-    time.textContent = row.state === "pending" ? "—" : fmtMs(row.duration_ms);
-    li.appendChild(dot); li.appendChild(name); li.appendChild(time);
-    list.appendChild(li);
-  });
-  const done = rows.filter((r) => r.state === "done").length;
-  const pct = state === "ready" ? 100 : (rows.length ? Math.round((done / rows.length) * 100) : 0);
-  el("init-progress-fill").style.width = pct + "%";
-  el("init-total").textContent = state === "ready" || state === "failed"
-    ? fmtMs(status.total_ms) : "measuring…";
-  el("stat-init").textContent = state === "ready" || state === "failed"
-    ? fmtMs(status.total_ms) : "—";
-}
-
-async function refreshModel() {
-  try {
-    const status = await apiGet("/api/model");
-    renderModel(status);
-    if (status.status === "initializing") {
-      if (!modelTimer) modelTimer = setInterval(refreshModel, 400);
-    } else if (modelTimer) {
-      clearInterval(modelTimer);
-      modelTimer = null;
-      refreshHistory();
-    }
-  } catch (err) {
-    if (modelTimer) { clearInterval(modelTimer); modelTimer = null; }
-    setStatus(el("model-error"), "Could not read model status: " + err.message, true);
-  }
-}
-
-// ----------------------------------------------------------- activity UI
-
-function renderActivity(track) {
-  const dot = el("activity-dot");
-  const timeline = el("activity-timeline");
-  const running = track && track.status === "running";
-  const failed = track && track.status === "failed";
-  dot.classList.toggle("running", Boolean(running));
-  dot.classList.toggle("failed", Boolean(failed));
-  dot.innerHTML = "<i></i> " + (running ? "PROCESSING" : failed ? "FAILED" :
-    track ? "IDLE" : "IDLE");
-
-  if (!track) {
-    el("activity-phase").textContent = "Waiting for audio input";
-    el("activity-detail").textContent = "Submit a bundled clip or upload a WAV to start inference.";
-    el("activity-timer").textContent = "0 ms";
-    el("activity-fill").style.width = "0%";
-    timeline.innerHTML = '<li class="empty">No processing events yet.</li>';
-    return;
-  }
-
-  el("activity-phase").textContent = track.phase_label || PHASE_LABELS[track.phase] || track.phase;
-  el("activity-detail").textContent =
-    (track.file_name || "input") + " · " + (track.source || "audio");
-  el("activity-timer").textContent = running ? fmtMs(track.elapsed_ms) :
-    (track.status === "failed" ? "error" : "done");
-  // Progress follows the real backend phase count, not elapsed wall time.
-  const index = PHASE_ORDER.indexOf(track.phase);
-  const pct = track.status === "completed" ? 100 :
-    Math.round(((index + 1) / PHASE_ORDER.length) * 100);
-  el("activity-fill").style.width = Math.max(0, pct) + "%";
-  timeline.innerHTML = "";
-  (track.events || []).forEach((event) => {
-    const li = document.createElement("li");
-    const marker = document.createElement("span");
-    marker.className = "event-dot";
-    const label = document.createElement("span");
-    label.className = "event-label";
-    label.textContent = event.label || event.stage;
-    const time = document.createElement("span");
-    time.className = "event-time";
-    time.textContent = "+" + fmtMs(event.at_ms);
-    li.appendChild(marker); li.appendChild(label); li.appendChild(time);
-    timeline.appendChild(li);
-  });
-}
-
-async function pollActivity(requestId) {
-  try {
-    const data = await apiGet("/api/activity?request_id=" + encodeURIComponent(requestId));
-    if (requestId !== latestRequestId) return; // never mix concurrent requests
-    renderActivity(data.track || data.current);
-  } catch (err) {
-    // Polling is observational; a transient failure must not break inference.
-  }
-}
-
-function beginActivity(requestId, fileName, source) {
-  latestRequestId = requestId;
-  renderActivity({
-    request_id: requestId, file_name: fileName, source,
-    phase: "received", phase_label: "Receiving audio file",
-    status: "running", elapsed_ms: 0,
-    events: [{ stage: "received", label: "Receiving audio file", at_ms: 0 }],
-  });
-  return setInterval(() => pollActivity(requestId), 130);
-}
-
-function endActivity(timer, requestId) {
-  clearInterval(timer);
-  pollActivity(requestId);
-}
-
-// ------------------------------------------------------- prediction/history
-
-function renderPrediction(prediction, timing) {
+function renderPrediction(prediction) {
   const pct = (prediction.confidence * 100).toFixed(1);
   const lines = ["Predicted: " + prediction.label + "  (" + pct + "%)"];
-  const file = prediction.file_name ||
-    (prediction.clip ? prediction.clip.file_name : "");
   if (prediction.clip) {
     lines.push("Clip: " + prediction.clip.source_dataset + " / " + prediction.clip.file_name);
     lines.push("Dataset label for this clip: " + prediction.clip.label);
   } else {
-    if (prediction.file_name) lines.push("File: " + prediction.file_name);
+    if (prediction.file_name) {
+      lines.push("File: " + prediction.file_name);
+    }
     if (prediction.duration_seconds != null) {
-      lines.push("Duration: " + Number(prediction.duration_seconds).toFixed(2) + "s");
+      lines.push("Duration: " + Number(prediction.duration_seconds).toFixed(1) + "s");
     }
     lines.push("Source: uploaded WAV");
   }
-  const hero = el("prediction");
-  hero.textContent = lines.join("\n");
-  hero.classList.remove("error");
-  hero.classList.remove("flash");
-  void hero.offsetWidth;
-  hero.classList.add("flash");
-  el("result-chip").textContent = "COMPLETED";
-  el("result-file").textContent = file || "—";
-  el("result-file").title = file || "";
-  el("result-audio").textContent = prediction.duration_seconds != null
-    ? fmtSeconds(prediction.duration_seconds)
-    : (prediction.clip && prediction.clip.duration_seconds != null
-      ? fmtSeconds(prediction.clip.duration_seconds) : "—");
-  el("result-total").textContent = timing ? fmtMs(timing.total_ms) : "—";
-  el("result-confidence").textContent = pct + "%";
-
-  const stages = el("result-stages");
-  stages.innerHTML = "";
-  if (timing && timing.stages_ms) {
-    STAGE_ORDER.forEach((key) => {
-      if (!(key in timing.stages_ms)) return;
-      const row = document.createElement("div");
-      row.className = "stage-row";
-      const label = document.createElement("span");
-      label.textContent = STAGE_LABELS[key] || key;
-      const value = document.createElement("strong");
-      value.textContent = fmtMs(timing.stages_ms[key]);
-      row.appendChild(label); row.appendChild(value);
-      stages.appendChild(row);
-    });
-  }
+  el("prediction").textContent = lines.join("\n");
   const bars = el("top-k");
   bars.innerHTML = "";
   prediction.top_k.forEach((pair) => {
@@ -482,52 +363,217 @@ function renderPrediction(prediction, timing) {
     const value = document.createElement("span");
     value.className = "bar-value";
     value.textContent = (prob * 100).toFixed(1) + "%";
-    bar.appendChild(label); bar.appendChild(track); bar.appendChild(value);
+    bar.appendChild(label);
+    bar.appendChild(track);
+    bar.appendChild(value);
     bars.appendChild(bar);
+  });
+}
+
+// ------------------------------------------------------------- monitor board
+
+function renderModel(status) {
+  const state = status.status || "not_started";
+  const labels = {
+    not_started: "checking",
+    initializing: "loading",
+    ready: "ready",
+    failed: "failed",
+  };
+  el("monitor-model-status").textContent = labels[state] || state;
+  el("monitor-init").textContent =
+    state === "ready" || state === "failed" ? fmtMs(status.total_ms) : "—";
+  setStatus(
+    el("model-error"),
+    state === "failed" ? (status.error || "Model initialization failed") : "",
+    state === "failed"
+  );
+  el("model-retry").classList.toggle("hidden", state !== "failed");
+
+  const list = el("monitor-init-stages");
+  list.innerHTML = "";
+  (status.stages || []).forEach((row) => {
+    const li = document.createElement("li");
+    const label = document.createElement("span");
+    label.className = "event-label";
+    label.textContent = row.label || row.key;
+    const time = document.createElement("span");
+    time.className = "event-time";
+    time.textContent = row.state === "pending" ? "—" : fmtMs(row.duration_ms);
+    li.appendChild(label);
+    li.appendChild(time);
+    list.appendChild(li);
+  });
+}
+
+async function refreshModel() {
+  try {
+    const status = await apiGet("/api/model");
+    renderModel(status);
+    if (status.status === "initializing") {
+      if (!modelTimer) modelTimer = setInterval(refreshModel, 400);
+    } else if (modelTimer) {
+      clearInterval(modelTimer);
+      modelTimer = null;
+      refreshHistory();
+    }
+  } catch (err) {
+    if (modelTimer) {
+      clearInterval(modelTimer);
+      modelTimer = null;
+    }
+    setStatus(el("model-error"), "Could not read model status: " + err.message, true);
+  }
+}
+
+function renderActivity(track) {
+  const status = track ? track.status : "idle";
+  el("monitor-status").textContent = status;
+  el("monitor-phase").textContent = track
+    ? (track.phase_label || PHASE_LABELS[track.phase] || track.phase)
+    : "Waiting for audio";
+  el("monitor-elapsed").textContent = !track ? "0 ms" : (
+    status === "running" ? fmtMs(track.elapsed_ms) :
+      status === "failed" ? "error" : "done"
+  );
+
+  const list = el("monitor-events");
+  list.innerHTML = "";
+  const events = track && track.events ? track.events : [];
+  if (!events.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "No processing events yet.";
+    list.appendChild(li);
+    return;
+  }
+  events.forEach((event) => {
+    const li = document.createElement("li");
+    const label = document.createElement("span");
+    label.className = "event-label";
+    label.textContent = event.label || event.stage;
+    const time = document.createElement("span");
+    time.className = "event-time";
+    time.textContent = "+" + fmtMs(event.at_ms);
+    li.appendChild(label);
+    li.appendChild(time);
+    list.appendChild(li);
+  });
+}
+
+async function pollActivity(requestId) {
+  try {
+    const data = await apiGet(
+      "/api/activity?request_id=" + encodeURIComponent(requestId)
+    );
+    if (requestId !== latestRequestId) return;
+    renderActivity(data.track || data.current);
+  } catch (err) {
+    // Polling is observational; it must never interrupt inference.
+  }
+}
+
+function beginActivity(requestId, fileName, source) {
+  latestRequestId = requestId;
+  renderActivity({
+    request_id: requestId,
+    file_name: fileName,
+    source: source,
+    phase: "received",
+    phase_label: PHASE_LABELS.received,
+    status: "running",
+    elapsed_ms: 0,
+    events: [{ stage: "received", label: PHASE_LABELS.received, at_ms: 0 }],
+  });
+  return setInterval(() => pollActivity(requestId), 130);
+}
+
+function endActivity(timer, requestId) {
+  clearInterval(timer);
+  pollActivity(requestId);
+}
+
+function renderTiming(timing, prediction) {
+  const file = prediction.file_name ||
+    (prediction.clip ? prediction.clip.file_name : "") || "—";
+  el("monitor-file").textContent = file;
+  el("monitor-total").textContent = timing ? fmtMs(timing.total_ms) : "—";
+
+  const box = el("monitor-stages");
+  box.innerHTML = "";
+  if (!timing || !timing.stages_ms) return;
+  STAGE_ORDER.forEach((key) => {
+    if (!(key in timing.stages_ms)) return;
+    const row = document.createElement("div");
+    row.className = "monitor-stage";
+    const label = document.createElement("span");
+    label.textContent = STAGE_LABELS[key] || key;
+    const value = document.createElement("strong");
+    value.textContent = fmtMs(timing.stages_ms[key]);
+    row.appendChild(label);
+    row.appendChild(value);
+    box.appendChild(row);
   });
 }
 
 function renderHistory(data) {
   const s = data.stats || {};
-  el("stat-count").textContent = String(s.count || 0);
-  el("stat-avg").textContent = s.count ? fmtMs(s.avg_ms) : "—";
-  el("stat-min").textContent = s.count ? fmtMs(s.min_ms) : "—";
-  el("stat-max").textContent = s.count ? fmtMs(s.max_ms) : "—";
-  if (!s.init_ms && el("stat-init").textContent === "—") {
-    el("stat-init").textContent = "—";
-  }
-  const tbody = el("history-table").querySelector("tbody");
+  el("monitor-count").textContent = String(s.count || 0);
+  el("monitor-avg").textContent = s.count ? fmtMs(s.avg_ms) : "—";
+  el("monitor-range").textContent = s.count
+    ? fmtMs(s.min_ms) + " / " + fmtMs(s.max_ms) : "—";
+
   const rows = data.history || [];
+  const tbody = el("history-table").querySelector("tbody");
   tbody.innerHTML = "";
-  rows.slice().reverse().forEach((row) => {
+  rows.slice(-8).reverse().forEach((row) => {
     const tr = document.createElement("tr");
-    const cells = [
-      (() => { try { return new Date(row.timestamp).toLocaleTimeString(); } catch (e) { return String(row.timestamp || ""); } })(),
-      row.file_name || "—",
-      row.label || "—",
-      row.confidence != null ? (row.confidence * 100).toFixed(1) + "%" : "—",
-      fmtMs(row.total_ms),
-      row.decision || "—",
-    ];
-    cells.forEach((text) => {
+    let time = "—";
+    try {
+      time = new Date(row.timestamp).toLocaleTimeString();
+    } catch (e) {}
+    [time, row.label || "—", fmtMs(row.total_ms)].forEach((text) => {
       const td = document.createElement("td");
       td.textContent = text;
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
   });
-  el("history-empty").classList.toggle("show", rows.length === 0);
+  el("history-empty").classList.toggle("hidden", rows.length > 0);
 }
 
 async function refreshHistory() {
   try {
     renderHistory(await apiGet("/api/history"));
   } catch (err) {
-    // Telemetry polling must never interrupt the main workflow.
+    // Session telemetry polling must never interrupt the main workflow.
   }
 }
 
-// ------------------------------------------------------------ existing flow
+async function submitInference(path, body, fileName, source) {
+  const requestId = newRequestId();
+  body.request_id = requestId;
+  const timer = beginActivity(requestId, fileName, source);
+  try {
+    const res = await apiPost(path, body);
+    // A newer request owns the shared readouts; never overwrite them with an
+    // older response's prediction or timing.
+    if (requestId === latestRequestId) {
+      renderPrediction(res.prediction);
+      renderState(res.state);
+      renderTiming(res.timing, res.prediction);
+    }
+    refreshHistory();
+    return res;
+  } catch (err) {
+    if (requestId === latestRequestId) {
+      el("prediction").textContent = "Error: " + err.message;
+    }
+    return null;
+  } finally {
+    endActivity(timer, requestId);
+  }
+}
 
 function renderQuickAction(state) {
   const box = el("quick-action");
@@ -550,14 +596,6 @@ function renderState(state) {
   badge.textContent = vstate;
   badge.className = "state-badge state-" + vstate;
 
-  if (decision) {
-    el("result-decision").textContent = decision.verified
-      ? "Verified: " + (decision.audio_mode || "no mode change")
-      : (decision.verification_state || "idle");
-  } else {
-    el("result-decision").textContent = "—";
-  }
-
   const out = el("decision");
   const reasons = [];
   const log = [];
@@ -567,7 +605,8 @@ function renderState(state) {
     const lines = [];
     const dclass = decision.detected_class || "(none)";
     lines.push("detected: " + dclass + (decision.detected_class
-      ? "  conf " + (decision.detected_confidence * 100).toFixed(1) + "%" : ""));
+      ? "  conf " + (decision.detected_confidence * 100).toFixed(1) + "%"
+      : ""));
     lines.push("trigger enabled: " + decision.trigger_enabled +
       "   verified: " + decision.verified);
     lines.push("state: " + decision.verification_state +
@@ -577,11 +616,19 @@ function renderState(state) {
       lines.push("release timer: " +
         Number(decision.release_remaining_seconds || 0).toFixed(1) + "s remaining");
     }
-    if (decision.cooldown_active) lines.push("cooldown active (duplicate alerts suppressed)");
-    if (decision.restored) lines.push("preferred mode restored");
+    if (decision.cooldown_active) {
+      lines.push("cooldown active (duplicate alerts suppressed)");
+    }
+    if (decision.restored) {
+      lines.push("preferred mode restored");
+    }
     out.textContent = lines.join("\n");
-    if (decision.notification) reasons.push({ text: "Notification: " + decision.notification, cls: "notify" });
-    if (decision.warning) reasons.push({ text: "Warning: " + decision.warning, cls: "warning" });
+    if (decision.notification) {
+      reasons.push({ text: "Notification: " + decision.notification, cls: "notify" });
+    }
+    if (decision.warning) {
+      reasons.push({ text: "Warning: " + decision.warning, cls: "warning" });
+    }
     decision.reasons.forEach((reason) => reasons.push({ text: reason, cls: "" }));
     decision.log.forEach((entry) => log.push({ text: entry, cls: "" }));
   }
@@ -590,39 +637,13 @@ function renderState(state) {
   renderQuickAction(state);
 }
 
-async function submitInference(path, body, fileName, source) {
-  const requestId = newRequestId();
-  body.request_id = requestId;
-  const timer = beginActivity(requestId, fileName, source);
-  try {
-    const res = await apiPost(path, body);
-    // A newer submission owns the shared result cards; never let an older
-    // response overwrite its prediction, timing, or supervisor state.
-    if (requestId === latestRequestId) {
-      renderPrediction(res.prediction, res.timing);
-      renderState(res.state);
-    }
-    refreshHistory();
-    return res;
-  } catch (err) {
-    if (requestId === latestRequestId) {
-      setStatus(el("prediction"), "Error: " + err.message, true);
-      el("result-chip").textContent = "FAILED";
-    }
-    return null;
-  } finally {
-    endActivity(timer, requestId);
-  }
-}
-
 async function onApply() {
   setStatus(el("policy-status"), "Applying...", false);
   try {
     const res = await apiPost("/api/preferences", buildPreferencesPayload());
     renderState(res.state);
-    const count = res.state.enabled_classes.length;
-    el("policy-count").textContent = count + " ENABLED";
-    setStatus(el("policy-status"), "Applied. " + count + " class(es) enabled.", false);
+    setStatus(el("policy-status"),
+      "Applied. " + res.state.enabled_classes.length + " class(es) enabled.", false);
   } catch (err) {
     setStatus(el("policy-status"), err.message, true);
   }
@@ -630,9 +651,10 @@ async function onApply() {
 
 async function onAnalyze() {
   const clipId = el("clip-select").value;
-  if (!clipId) return;
-  setStatus(el("prediction"), "Classifying… first inference may load model artifacts.", false);
-  el("result-chip").textContent = "PROCESSING";
+  if (!clipId) {
+    return;
+  }
+  el("prediction").textContent = "Classifying... (the first run loads YAMNet; this can take a few seconds)";
   el("top-k").innerHTML = "";
   await submitInference("/api/classify", { clip_id: clipId }, clipId, "validation_clip");
 }
@@ -667,47 +689,6 @@ async function onQuickAction(action) {
   }
 }
 
-async function onUpload() {
-  const input = el("upload-wav");
-  const runBtn = el("upload-run");
-  const file = input && input.files ? input.files[0] : null;
-  if (!file) {
-    setStatus(el("prediction"), "No WAV file selected.", true);
-    return;
-  }
-  if (!file.name.toLowerCase().endsWith(".wav")) {
-    setStatus(el("prediction"), "Only .wav files are allowed.", true);
-    return;
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    setStatus(el("prediction"), "File too large (limit 10 MB).", true);
-    return;
-  }
-  if (runBtn) runBtn.disabled = true;
-  setStatus(el("prediction"), "Uploading and classifying WAV…", false);
-  el("result-chip").textContent = "PROCESSING";
-  el("top-k").innerHTML = "";
-  try {
-    const buf = await file.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      const slice = bytes.subarray(i, Math.min(i + chunk, bytes.length));
-      for (let j = 0; j < slice.length; j++) binary += String.fromCharCode(slice[j]);
-    }
-    await submitInference("/api/classify-upload", {
-      file_name: file.name,
-      data: btoa(binary),
-    }, file.name, "uploaded");
-  } catch (err) {
-    setStatus(el("prediction"), "Error: " + (err.message || "upload failed"), true);
-    el("result-chip").textContent = "FAILED";
-  } finally {
-    if (runBtn) runBtn.disabled = false;
-  }
-}
-
 async function init() {
   try {
     cfg = await apiGet("/api/config");
@@ -732,7 +713,7 @@ async function init() {
   el("upload-run").addEventListener("click", onUpload);
   el("model-retry").addEventListener("click", async () => {
     try {
-      renderModel(await apiPost("/api/model/init", {}));
+      await apiPost("/api/model/init", {});
       refreshModel();
     } catch (err) {
       setStatus(el("model-error"), err.message, true);
@@ -747,3 +728,43 @@ async function init() {
 }
 
 init();
+
+async function onUpload() {
+  const input = el('upload-wav');
+  const runBtn = el('upload-run');
+  const file = input && input.files ? input.files[0] : null;
+  if (!file) {
+    el('prediction').textContent = 'No WAV file selected.';
+    return;
+  }
+  if (!file.name.toLowerCase().endsWith('.wav')) {
+    el('prediction').textContent = 'Only .wav files are allowed.';
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    el('prediction').textContent = 'File too large (limit 10 MB).';
+    return;
+  }
+  if (runBtn) runBtn.disabled = true;
+  el('prediction').textContent = 'Classifying uploaded WAV... (the first run loads YAMNet; this can take a few seconds)';
+  el('top-k').innerHTML = '';
+  try {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      const slice = bytes.subarray(i, Math.min(i + chunk, bytes.length));
+      for (let j = 0; j < slice.length; j++) binary += String.fromCharCode(slice[j]);
+    }
+    const b64 = btoa(binary);
+    await submitInference("/api/classify-upload", {
+      file_name: file.name,
+      data: b64,
+    }, file.name, "uploaded");
+  } catch (e) {
+    el('prediction').textContent = 'Error: ' + (e.message || 'upload failed');
+  } finally {
+    if (runBtn) runBtn.disabled = false;
+  }
+}
