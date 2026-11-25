@@ -372,10 +372,17 @@ function renderPrediction(prediction) {
 
 // ------------------------------------------------------------- monitor board
 
+function setInferenceEnabled(enabled) {
+  ["analyze", "upload-run"].forEach((id) => {
+    const node = el(id);
+    if (node) node.disabled = !enabled;
+  });
+}
+
 function renderModel(status) {
   const state = status.status || "not_started";
   const labels = {
-    not_started: "checking",
+    not_started: "not loaded",
     initializing: "loading",
     ready: "ready",
     failed: "failed",
@@ -388,7 +395,14 @@ function renderModel(status) {
     state === "failed" ? (status.error || "Model initialization failed") : "",
     state === "failed"
   );
-  el("model-retry").classList.toggle("hidden", state !== "failed");
+
+  const loadButton = el("model-retry");
+  loadButton.classList.toggle("hidden", state === "ready");
+  loadButton.disabled = state === "initializing";
+  loadButton.textContent = state === "initializing" ? "Loading model..." : (
+    state === "failed" ? "Retry model load" : "Load model"
+  );
+  setInferenceEnabled(state === "ready");
 
   const list = el("monitor-init-stages");
   list.innerHTML = "";
@@ -713,7 +727,7 @@ async function init() {
   el("upload-run").addEventListener("click", onUpload);
   el("model-retry").addEventListener("click", async () => {
     try {
-      await apiPost("/api/model/init", {});
+      renderModel(await apiPost("/api/model/init", {}));
       refreshModel();
     } catch (err) {
       setStatus(el("model-error"), err.message, true);

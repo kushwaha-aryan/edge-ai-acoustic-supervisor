@@ -182,5 +182,55 @@ class ServerMonitoringTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["stats"]["count"], 1)
 
 
+class ManualModelLoadTests(unittest.TestCase):
+    """GET /api/model reports status; only POST /api/model/init starts loading."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        catalog = _make_catalog(self._tmp.name)
+        self.service = AppService(
+            catalog, predictor_factory=lambda: FakePredictor()
+        )
+        self.httpd = create_server(self.service, "127.0.0.1", 0)
+        self.port = self.httpd.server_address[1]
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self._stop)
+
+    def _stop(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=5)
+
+    def _request(self, method, path, body=None):
+        conn = HTTPConnection("127.0.0.1", self.port, timeout=10)
+        payload = json.dumps(body) if body is not None else None
+        conn.request(method, path, body=payload,
+                     headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        data = response.read()
+        conn.close()
+        return response.status, data
+
+    def test_status_is_report_only_until_explicit_init(self):
+        status, body = self._request("GET", "/api/model")
+        self.assertEqual(status, 200)
+        info = json.loads(body)
+        self.assertEqual(info["status"], "not_started")
+        self.assertEqual(info["attempts"], 0)
+
+        status, body = self._request("POST", "/api/model/init", {})
+        self.assertEqual(status, 200)
+        info = json.loads(body)
+        self.assertEqual(info["attempts"], 1)
+        self.assertNotEqual(info["status"], "not_started")
+
+        for _ in range(100):
+            if self.service.monitor.init_status()["status"] != "initializing":
+                break
+            time.sleep(0.01)
+
+
 if __name__ == "__main__":
     unittest.main()

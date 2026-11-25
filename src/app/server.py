@@ -113,10 +113,8 @@ def _make_handler(service: AppService) -> type[BaseHTTPRequestHandler]:
                 elif path == "/api/config":
                     self._send_json(200, service.config())
                 elif path == "/api/model":
-                    # First dashboard load starts real initialization; later
-                    # calls only report status (never reload an loaded model).
-                    if service.monitor.init_status()["status"] == "not_started":
-                        service.start_initialization()
+                    # Report-only. Loading is explicitly started through
+                    # POST /api/model/init from the monitor's Load model button.
                     self._send_json(200, service.monitor.init_status())
                 elif path == "/api/activity":
                     query = parse_qs(urlsplit(self.path).query)
@@ -170,13 +168,11 @@ def main(argv: list[str] | None = None) -> int:
 
     catalog = SampleCatalog()
     service = AppService(catalog)
-    # Real model work starts at launch in a background thread; the dashboard
-    # reports measured progress instead of simulating a loading animation.
-    service.start_initialization()
     httpd = create_server(service, args.host, args.port)
     host, port = httpd.server_address[0], httpd.server_address[1]
     print(f"Edge AI Acoustic Supervisor interface: http://{host}:{port}")
     print(f"bundled validation clips: {len(catalog.clips)}")
+    print("Model: not loaded - press 'Load model' in the Inference monitor.")
     print("Local use only. SIMULATED: no live mic, no earbud control, and a "
           "confirmed quick action executes nothing.")
     try:
